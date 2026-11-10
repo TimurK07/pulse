@@ -45,3 +45,11 @@ uploads/*
 /test-results/
 /playwright-report/
 /.next-e2e/
+
+# внутренние материалы команды (хранятся локально, в репозиторий не попадают)
+/docs/DEMO.md
+/docs/DEMO_CHECKLIST.md
+/docs/QA.md
+/scripts/screens.mjs
+/AGENTS.md
+/.claude/

@@ -3,7 +3,7 @@
 import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 const out = process.argv[2] ?? "shots";
-const base = process.argv[3] ?? "http://localhost:3217";
+const base = process.argv[3] ?? "http://localhost:3000";
 mkdirSync(out, { recursive: true });
 const D = { width: 1440, height: 900 }, M = { width: 390, height: 844 };
 const DRAFT = { t: "Не видно, на каком этапе согласование документов", d: "Когда пакет документов уходит в другое подразделение, непонятно, на каком этапе он сейчас и кто ответственный. Приходится звонить и уточнять статус, это отнимает время каждый день." };
