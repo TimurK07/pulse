@@ -50,8 +50,8 @@ export function FlowChart({ weeks }: { weeks: Week[] }) {
                 ) : null
               }
             />
-            <Bar dataKey="created" name="Поступило" fill={t["--chart-1"]} radius={[4, 4, 0, 0]} maxBarSize={18} />
-            <Bar dataKey="resolved" name="Решено" fill={t["--chart-2"]} radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="created" name="Поступило" fill={t["--chart-1"]} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={false} />
+            <Bar dataKey="resolved" name="Решено" fill={t["--chart-2"]} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>

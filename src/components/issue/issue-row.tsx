@@ -2,18 +2,23 @@
 import Link from "next/link";
 import { EyeOff, MessageSquare, Paperclip, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { authorStepIndex, isOpen } from "@/lib/domain";
 import type { IssueListItem } from "@/lib/services/issues";
 import { fmtShort } from "@/lib/client/format";
 import { Avatar, CategoryTag, PriorityIcon, SlaTimer, StatusGlyph, StatusPill } from "@/components/ui/status";
 import { Tip } from "@/components/ui/tooltip";
 
 /** Строка очереди обработчика — плотная, 40px (см. design-research 3.11) */
-export function QueueRow({ issue }: { issue: IssueListItem }) {
+export function QueueRow({ issue, compact = false }: { issue: IssueListItem; compact?: boolean }) {
   return (
     <Link
       href={`/issues/${issue.code}`}
       data-row
-      className="group grid h-10 grid-cols-[16px_52px_16px_minmax(0,1fr)_auto] items-center gap-3 px-4 transition-colors-fast hairline-b hover:bg-subtle focus-visible:bg-accent-soft focus-visible:outline-none focus-visible:shadow-[inset_2px_0_0_var(--accent)] sm:px-6 md:grid-cols-[16px_52px_16px_minmax(0,1fr)_auto_auto_88px_20px_52px]"
+      className={
+        compact
+          ? "group grid h-10 grid-cols-[16px_52px_16px_minmax(0,1fr)_auto] items-center gap-3 px-4 transition-colors-fast hairline-b hover:bg-subtle focus-visible:bg-accent-soft focus-visible:outline-none focus-visible:shadow-[inset_2px_0_0_var(--accent)] sm:px-6 md:grid-cols-[16px_52px_16px_minmax(0,1fr)_120px_20px]"
+          : "group grid h-10 grid-cols-[16px_52px_16px_minmax(0,1fr)_auto] items-center gap-3 px-4 transition-colors-fast hairline-b hover:bg-subtle focus-visible:bg-accent-soft focus-visible:outline-none focus-visible:shadow-[inset_2px_0_0_var(--accent)] sm:px-6 md:grid-cols-[16px_52px_16px_minmax(0,1fr)_auto_auto_120px_20px_52px]"
+      }
     >
       <PriorityIcon priority={issue.priority} />
       <span className="mono-id text-ink-3">{issue.code}</span>
@@ -22,7 +27,7 @@ export function QueueRow({ issue }: { issue: IssueListItem }) {
       <span className="flex items-center gap-2 md:hidden">
         <SlaTimer {...issue} />
       </span>
-      <span className="hidden items-center gap-2.5 text-micro text-ink-3 md:flex">
+      <span className={compact ? "hidden" : "hidden items-center gap-2.5 text-micro text-ink-3 md:flex"}>
         {issue.supportersCount > 0 && (
           <Tip content={`Поддержали: ${issue.supportersCount}`}>
             <span className="inline-flex items-center gap-1 mono-num">
@@ -39,7 +44,7 @@ export function QueueRow({ issue }: { issue: IssueListItem }) {
         )}
         {issue.attachmentsCount > 0 && <Paperclip className="size-3" aria-label="Есть вложения" />}
       </span>
-      <span className="hidden min-w-0 items-center gap-2 md:flex">
+      <span className={compact ? "hidden" : "hidden min-w-0 items-center gap-2 md:flex"}>
         <CategoryTag name={issue.category.name} className="hidden xl:inline-flex" />
         <span className="max-w-40 truncate text-meta text-ink-3">
           {issue.isAnonymous && !issue.isOwn ? (
@@ -62,7 +67,7 @@ export function QueueRow({ issue }: { issue: IssueListItem }) {
           </span>
         </Tip>
       </span>
-      <span className="hidden text-right text-micro text-ink-3 md:block">{fmtShort(issue.updatedAt)}</span>
+      {!compact && <span className="hidden text-right text-micro text-ink-3 md:block">{fmtShort(issue.updatedAt)}</span>}
     </Link>
   );
 }
@@ -88,13 +93,27 @@ export function MyIssueRow({ issue }: { issue: IssueListItem }) {
           {waiting && <span className="text-[var(--st-info)]"> · нужен ваш ответ</span>}
         </span>
       </span>
-      <span>
+      <span className="flex flex-col items-start gap-1.5">
         <StatusPill status={issue.status} />
+        <MiniProgress status={issue.status} />
       </span>
       <span className="text-meta text-ink-3 sm:text-right">
         {issue.resolvedAt ? `решено ${fmtShort(issue.resolvedAt)}` : `подано ${fmtShort(issue.createdAt)}`}
       </span>
     </Link>
+  );
+}
+
+/** Четыре шага «Принято → Рассмотрение → В работе → Результат» в миниатюре */
+function MiniProgress({ status }: { status: IssueListItem["status"] }) {
+  const step = authorStepIndex(status);
+  const final = !isOpen(status);
+  return (
+    <span className="flex gap-0.5" role="img" aria-label={`Этап ${step + 1} из 4`}>
+      {[0, 1, 2, 3].map((n) => (
+        <span key={n} className={cn("h-1 w-5 rounded-full", n < step || (final && n === step) ? "bg-ink-2" : n === step ? "bg-ink-4" : "bg-subtle-2")} />
+      ))}
+    </span>
   );
 }
 

@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Pause } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { PRIORITY_LABEL, STATUS_LABEL, TYPE_LABEL, type IssueStatus, type IssueType, type Priority } from "@/lib/domain";
 import { formatDuration, slaInfo } from "@/lib/sla";
@@ -165,8 +164,8 @@ export function SlaTimer({ status, createdAt, firstResponseAt, firstResponseDueA
   if (info.state === "paused") {
     return (
       <Tip content={`${tip}. Ждём ответа автора`}>
-        <span className="inline-flex items-center gap-1 text-meta text-ink-3">
-          <Pause className="size-3" strokeWidth={2} />
+        <span className="inline-flex h-5 items-center gap-1.5 whitespace-nowrap text-meta text-ink-3">
+          <span className="rounded-chip bg-subtle px-1 font-sans text-micro font-medium uppercase tracking-[0.06em] text-ink-2">пауза</span>
           <span className="mono-num">{text}</span>
         </span>
       </Tip>

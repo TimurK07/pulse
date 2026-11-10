@@ -28,8 +28,8 @@ export function ResultsView() {
   const work = q.data?.items.filter((i) => i.status === "IN_PROGRESS") ?? [];
   return (
     <div className="pb-16">
-      <header className="border-b border-line px-4 pb-6 pt-8 sm:px-8">
-        <p className="text-meta text-ink-3">Доска результатов</p>
+      <header className="border-b border-line px-4 pb-6 pt-7 sm:px-8">
+        <p className="text-label font-medium text-ink-3">Доска результатов</p>
         <h1 className="mt-1 max-w-[760px] text-display font-semibold">
           {q.data ? (
             <>

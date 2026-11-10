@@ -133,11 +133,11 @@ export function QueueView() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="px-4 pt-5 sm:px-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
+      <header className="px-4 pt-7 sm:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-title-lg font-semibold">{viewMeta.label}</h1>
-            {viewMeta.hint && <p className="text-meta text-ink-3">{viewMeta.hint}</p>}
+            <h1 className="text-title-xl font-semibold">{viewMeta.label}</h1>
+            {viewMeta.hint && <p className="mt-1 text-meta text-ink-3">{viewMeta.hint}</p>}
           </div>
           <span className="hidden items-center gap-1.5 text-micro text-ink-3 md:flex">
             <Kbd>J</Kbd>
@@ -165,7 +165,7 @@ export function QueueView() {
       </header>
 
       <div className="sticky top-12 z-10 mt-3 flex flex-wrap items-center gap-2 border-y border-line bg-surface px-4 py-2 sm:px-6 lg:top-0">
-        <label className="relative flex min-w-[200px] flex-1 items-center sm:max-w-[280px]">
+        <label className="relative flex min-w-[200px] flex-1 items-center sm:max-w-[240px]">
           <Search className="pointer-events-none absolute left-2.5 size-3.5 text-ink-3" />
           <span className="sr-only">Поиск по обращениям</span>
           <input
@@ -265,7 +265,7 @@ function FilterSelect({
         value={value}
         onChange={(e) => onChange(e.target.value || null)}
         className={cn(
-          "h-8 max-w-[190px] appearance-none truncate rounded-ctl border bg-raised pl-2.5 pr-7 text-label outline-none transition-colors-fast hover:border-line-strong focus:border-focus",
+          "h-8 w-[138px] appearance-none truncate rounded-ctl border bg-raised pl-2.5 pr-7 text-label outline-none transition-colors-fast hover:border-line-strong focus:border-focus",
           value ? "border-ink-3 font-medium text-ink" : "border-line text-ink-2",
         )}
       >

@@ -8,6 +8,7 @@ import type { Analytics } from "@/lib/services/analytics";
 import { TYPE_LABEL } from "@/lib/domain";
 import { fmtDate, fmtHours, fmtPct } from "@/lib/client/format";
 import { ErrorState, Skeleton } from "@/components/ui/states";
+import { cn } from "@/lib/cn";
 import { FlowChart } from "@/components/analytics/flow-chart";
 import { CategoryBars, MetricStrip, StatusBar, ThemesList, WorkloadTable } from "@/components/analytics/parts";
 import { DigestPanel } from "@/components/analytics/digest-panel";
@@ -38,9 +39,9 @@ export function AnalyticsView() {
 
   return (
     <div className="pb-16">
-      <header className="flex flex-wrap items-end justify-between gap-4 px-4 pb-5 pt-6 sm:px-8">
-        <div>
-          <h1 className="text-title-lg font-semibold">Аналитика</h1>
+      <header className="flex flex-wrap items-end justify-between gap-4 px-4 pb-6 pt-7 sm:px-8">
+        <div className="max-w-[760px]">
+          <h1 className="text-title-xl font-semibold">Аналитика</h1>
           <p className="text-meta text-ink-3">
             {viewer.role === "HANDLER" ? "Показатели по обращениям, доступным вам: назначенным и вашим категориям." : "Все показатели считаются по обращениям в базе PULSE."} Наведите на показатель, чтобы увидеть определение.
           </p>
@@ -118,6 +119,8 @@ export function AnalyticsView() {
               </section>
             </div>
 
+            <SlaSection t={a.totals} />
+
             <section aria-label="Повторяющиеся проблемы">
               <h2 className="text-title-md font-semibold">Повторяющиеся проблемы</h2>
               <p className="mb-3 text-meta text-ink-3">
@@ -149,28 +152,12 @@ export function AnalyticsView() {
             <div className="grid gap-10 xl:grid-cols-2">
               <section aria-label="Подразделения" className="min-w-0">
                 <h2 className="text-title-md font-semibold">Подразделения авторов</h2>
-                <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[420px] text-left text-meta">
-                  <thead>
-                    <tr className="text-micro uppercase tracking-[0.06em] text-ink-3">
-                      <th className="py-2 font-medium">Подразделение</th>
-                      <th className="py-2 text-right font-medium">Всего</th>
-                      <th className="py-2 text-right font-medium">Открыто</th>
-                      <th className="py-2 text-right font-medium">Просрочено</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {a.byDepartment.map((d) => (
-                      <tr key={d.id} className="border-t border-line">
-                        <td className="py-2 text-ink">{d.name}</td>
-                        <td className="mono-num py-2 text-right">{d.total}</td>
-                        <td className="mono-num py-2 text-right text-ink-2">{d.open}</td>
-                        <td className={`mono-num py-2 text-right ${d.overdue ? "text-danger" : "text-ink-3"}`}>{d.overdue}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
+                <p className="mb-4 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-ink-3">
+                  <Legend color="var(--chart-2)">решено</Legend>
+                  <Legend color="var(--chart-1)">в работе</Legend>
+                  <Legend color="var(--danger)">просрочено</Legend>
+                </p>
+                <DepartmentBars rows={a.byDepartment} />
               </section>
               <section aria-label="Реализованные улучшения" className="min-w-0">
                 <h2 className="text-title-md font-semibold">Результаты внедрённых улучшений</h2>
@@ -200,5 +187,94 @@ export function AnalyticsView() {
         </>
       )}
     </div>
+  );
+}
+
+function Legend({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="size-2 rounded-[2px]" style={{ background: color }} />
+      {children}
+    </span>
+  );
+}
+
+function DepartmentBars({ rows }: { rows: Analytics["byDepartment"] }) {
+  const peak = Math.max(1, ...rows.map((r) => r.total));
+  return (
+    <ul className="space-y-3">
+      {rows.map((d) => {
+        const inWork = Math.max(0, d.open - d.overdue);
+        return (
+          <li key={d.id}>
+            <div className="flex items-baseline justify-between gap-3 text-meta">
+              <span className="truncate text-ink">{d.name}</span>
+              <span className="shrink-0 text-ink-3">
+                <span className="mono-num text-ink">{d.total}</span>
+                {d.overdue > 0 && <span className="text-danger"> · {d.overdue} просроч.</span>}
+              </span>
+            </div>
+            <div className="mt-1 flex h-1.5 gap-[2px]" role="img" aria-label={`${d.name}: решено ${d.resolved}, в работе ${inWork}, просрочено ${d.overdue}`}>
+              {d.resolved > 0 && <div className="h-full rounded-[2px]" style={{ width: `${(d.resolved / peak) * 100}%`, background: "var(--chart-2)" }} />}
+              {inWork > 0 && <div className="h-full rounded-[2px]" style={{ width: `${(inWork / peak) * 100}%`, background: "var(--chart-1)" }} />}
+              {d.overdue > 0 && <div className="h-full rounded-[2px] bg-danger" style={{ width: `${(d.overdue / peak) * 100}%` }} />}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Сроки: выполнение норматива первой реакции и где копятся просрочки */
+function SlaSection({ t }: { t: Analytics["totals"] }) {
+  const onTime = t.firstResponseOnTimeShare ?? 0;
+  const resolutionOverdue = Math.max(0, t.overdue - t.reactionOverdue);
+  return (
+    <section aria-label="Сроки и реакция" className="grid gap-6 rounded-pop border border-line bg-raised p-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="min-w-0">
+        <h2 className="text-title-md font-semibold">Сроки и реакция</h2>
+        <p className="mt-1 text-meta text-ink-3">Первая реакция в пределах норматива по приоритету</p>
+        <div className="mt-4 flex items-baseline gap-2">
+          <span className={cn("mono-num text-[28px] leading-8", onTime >= 0.9 ? "text-ok" : onTime >= 0.75 ? "text-warn" : "text-danger")}>{fmtPct(t.firstResponseOnTimeShare)}</span>
+          <span className="text-meta text-ink-3">реакций в срок · {t.responded} из {t.total} получили ответ</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-subtle-2" role="progressbar" aria-valuenow={Math.round(onTime * 100)} aria-valuemin={0} aria-valuemax={100} aria-label="Доля реакций в срок">
+          <div className="h-full rounded-full" style={{ width: `${onTime * 100}%`, background: onTime >= 0.9 ? "var(--ok)" : onTime >= 0.75 ? "var(--warn)" : "var(--danger)" }} />
+        </div>
+      </div>
+      <dl className="grid grid-cols-2 content-start gap-x-4 gap-y-3 text-meta">
+        <div>
+          <dt className="text-ink-3">Первая реакция, среднее</dt>
+          <dd className="mono-num mt-0.5 text-title-md text-ink">{fmtHours(t.avgFirstResponseHours)}</dd>
+        </div>
+        <div>
+          <dt className="text-ink-3">медиана</dt>
+          <dd className="mono-num mt-0.5 text-title-md text-ink">{fmtHours(t.medianFirstResponseHours)}</dd>
+        </div>
+        <div>
+          <dt className="text-ink-3">Решение, среднее</dt>
+          <dd className="mono-num mt-0.5 text-title-md text-ink">{t.avgResolutionDays == null ? "—" : `${t.avgResolutionDays.toFixed(1).replace(".", ",")} д`}</dd>
+        </div>
+        <div>
+          <dt className="text-ink-3">С результатом</dt>
+          <dd className="mono-num mt-0.5 text-title-md text-ink">{t.resolvedWithDecision}</dd>
+        </div>
+      </dl>
+      <div className="min-w-0">
+        <h3 className="text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Просрочено сейчас</h3>
+        <ul className="mt-2 space-y-2 text-meta">
+          <li className="flex items-center justify-between gap-3">
+            <Link href="/queue?view=no_response" className="text-ink hover:underline">Нет первой реакции</Link>
+            <span className={cn("mono-num", t.reactionOverdue ? "text-danger" : "text-ink-3")}>{t.reactionOverdue}</span>
+          </li>
+          <li className="flex items-center justify-between gap-3">
+            <Link href="/queue?view=overdue" className="text-ink hover:underline">Срок решения истёк</Link>
+            <span className={cn("mono-num", resolutionOverdue ? "text-danger" : "text-ink-3")}>{resolutionOverdue}</span>
+          </li>
+        </ul>
+        <p className="mt-3 text-micro text-ink-3">Просроченные эскалируются ответственному и руководителю автоматически.</p>
+      </div>
+    </section>
   );
 }

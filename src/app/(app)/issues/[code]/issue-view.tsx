@@ -10,13 +10,10 @@ import { api, errorMessage, ApiClientError } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
 import {
   ALLOWED_MIME,
-  AUTHOR_STEPS,
   LIMITS,
   PRIORITY_LABEL,
   PRIORITY_ORDER,
   STATUS_LABEL,
-  transitionLabel,
-  authorStepIndex,
   isOpen,
   type IssueStatus,
 } from "@/lib/domain";
@@ -29,6 +26,7 @@ import { EmptyState, ErrorState, Skeleton } from "@/components/ui/states";
 import { Timeline } from "@/components/issue/timeline";
 import { TransitionDialog } from "@/components/issue/transition-dialog";
 import { AiTriage } from "@/components/issue/ai-triage";
+import { LifecycleStrip, NextStep } from "@/components/issue/lifecycle";
 import { useViewer } from "@/components/shell/viewer";
 
 export function IssueView({ code }: { code: string }) {
@@ -158,13 +156,11 @@ export function IssueView({ code }: { code: string }) {
               )}
             </p>
 
-            {staff && v.transitions.length > 0 && (
-              <div className="mt-5 xl:hidden">
-                <Actions issue={i} inline onPick={(s) => { setPrefill(null); setTransitionError(null); setTarget(s); }} />
-              </div>
-            )}
+            <LifecycleStrip issue={i} />
 
-            {(v.isAuthor || v.access === "public") && <AuthorProgress status={i.status} />}
+            {staff && v.transitions.length > 0 && (
+              <NextStep issue={i} onPick={(s) => { setPrefill(null); setTransitionError(null); setTarget(s); }} />
+            )}
 
             {v.canAnswerInfo && (
               <div className="mt-6 rounded-ctl px-4 py-3" style={{ background: "var(--st-info-bg)" }}>
@@ -188,12 +184,24 @@ export function IssueView({ code }: { code: string }) {
               </section>
             )}
 
+            <section className="mt-8" aria-label="Описание">
+              <h2 className="sr-only">Описание</h2>
+              <p className="whitespace-pre-wrap text-[15px] leading-[26px] text-ink">{i.description}</p>
+              {i.proposedSolution && (
+                <div className="mt-5">
+                  <h2 className="text-label font-semibold uppercase tracking-[0.08em] text-ink-3">Предлагаемое решение</h2>
+                  <p className="mt-1.5 whitespace-pre-wrap text-body text-ink">{i.proposedSolution}</p>
+                </div>
+              )}
+            </section>
+
             {staff && isOpen(i.status) && (
-              <div className="mt-6">
+              <div className="mt-8">
                 <AiTriage
                   code={i.code}
                   currentPriority={i.priority}
                   canEdit={staff}
+                  canAsk={i.viewer.transitions.includes("NEEDS_INFO")}
                   onApplyPriority={(p) => patch.mutate({ priority: p })}
                   onAskQuestion={(question) => {
                     if (!i.viewer.transitions.includes("NEEDS_INFO")) {
@@ -207,16 +215,6 @@ export function IssueView({ code }: { code: string }) {
                 />
               </div>
             )}
-
-            <section className="mt-6" aria-label="Описание">
-              <p className="whitespace-pre-wrap text-[15px] leading-6 text-ink">{i.description}</p>
-              {i.proposedSolution && (
-                <div className="mt-5">
-                  <h2 className="text-label font-semibold uppercase tracking-[0.08em] text-ink-3">Предлагаемое решение</h2>
-                  <p className="mt-1.5 whitespace-pre-wrap text-body text-ink">{i.proposedSolution}</p>
-                </div>
-              )}
-            </section>
 
             {v.access !== "public" && <Attachments issue={i} onUploaded={invalidate} />}
 
@@ -242,12 +240,6 @@ export function IssueView({ code }: { code: string }) {
         {/* Правая панель свойств */}
         <aside aria-label="Свойства обращения" className="shrink-0 border-t border-line bg-surface xl:w-[300px] xl:border-l xl:border-t-0">
           <div className="space-y-6 px-5 py-5 xl:sticky xl:top-0">
-            {staff && v.transitions.length > 0 && (
-              <div className="hidden xl:block">
-                <Actions issue={i} onPick={(s) => { setPrefill(null); setTransitionError(null); setTarget(s); }} />
-              </div>
-            )}
-
             <section>
               <h2 className="mb-1 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Свойства</h2>
               <dl className="divide-y divide-line text-ui">
@@ -356,21 +348,6 @@ export function IssueView({ code }: { code: string }) {
   );
 }
 
-function Actions({ issue: i, onPick, inline }: { issue: IssueDetail; onPick: (s: IssueStatus) => void; inline?: boolean }) {
-  return (
-    <section aria-label="Действия">
-      {!inline && <h2 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Действия</h2>}
-      <div className={cn("flex gap-1.5", inline ? "flex-wrap" : "flex-col")}>
-        {i.viewer.transitions.map((s, idx) => (
-          <Button key={s} size={inline ? "sm" : "md"} variant={idx === 0 ? "primary" : s === "REJECTED" ? "danger" : "secondary"} className="justify-start" onClick={() => onPick(s)}>
-            {transitionLabel(i.status, s)}
-          </Button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function Prop({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[104px_minmax(0,1fr)] items-start gap-2 py-2.5">
@@ -465,28 +442,6 @@ function Deadlines({ issue: i, canEdit, onChangeDue }: { issue: IssueDetail; can
         </div>
       </div>
     </div>
-  );
-}
-
-function AuthorProgress({ status }: { status: IssueStatus }) {
-  const idx = authorStepIndex(status);
-  const finalLabel = status === "REJECTED" ? "Отклонено" : status === "CLOSED" ? "Закрыто" : status === "IMPLEMENTED" ? "Реализовано" : "Результат";
-  return (
-    <ol className="mt-6 grid grid-cols-4 gap-1" aria-label="Ход рассмотрения">
-      {AUTHOR_STEPS.map((s, n) => {
-        const done = n < idx || (n === idx && n === 3);
-        const current = n === idx && n !== 3;
-        return (
-          <li key={s.key} className="min-w-0" aria-current={current ? "step" : undefined}>
-            <div className={cn("h-1 rounded-full", done ? "bg-ink" : current ? "bg-ink-3" : "bg-subtle-2")} />
-            <div className={cn("mt-1.5 truncate text-label", done || current ? "font-medium text-ink" : "text-ink-3")}>
-              {n === 3 ? finalLabel : s.label}
-              {n === 1 && status === "NEEDS_INFO" && <span className="font-normal text-[var(--st-info)]"> · ждём вас</span>}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 

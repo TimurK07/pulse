@@ -97,8 +97,13 @@ function eventText(e: Extract<Item, { kind: "event" }>): { icon: React.ReactNode
   }
 }
 
-export function Timeline({ items, highlightId }: { items: Item[]; highlightId?: string | null }) {
-  if (!items.length) return null;
+/** Порядок событий с одинаковым временем: подача → маршрут → назначение → остальное */
+const TIE: Record<string, number> = { CREATED: 0, ROUTED: 1, ASSIGNED: 2 };
+const tieRank = (it: Item) => (it.kind === "event" ? (TIE[it.type] ?? 5) : 6);
+
+export function Timeline({ items: raw, highlightId }: { items: Item[]; highlightId?: string | null }) {
+  if (!raw.length) return null;
+  const items = [...raw].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || tieRank(a) - tieRank(b));
   return (
     <ol className="relative">
       <span aria-hidden className="absolute bottom-3 left-[11px] top-3 w-px bg-line" />

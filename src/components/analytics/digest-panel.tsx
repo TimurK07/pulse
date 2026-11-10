@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SourceBadge } from "@/components/ui/status";
 import { Skeleton } from "@/components/ui/states";
 import { cn } from "@/lib/cn";
+import { ArrowRight, TrendingUp, TriangleAlert, Zap } from "lucide-react";
 
 interface DigestContent {
   headline: string;
@@ -28,6 +29,35 @@ interface Digest {
 }
 
 const IMPACT: Record<string, string> = { high: "высокое влияние", medium: "среднее влияние", low: "низкое влияние" };
+const IMPACT_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+function ImpactMeter({ impact, count }: { impact: "high" | "medium" | "low"; count: number }) {
+  const level = IMPACT_RANK[impact];
+  return (
+    <div className="flex items-center gap-2 sm:block sm:pt-1">
+      <div className="flex gap-0.5" role="img" aria-label={IMPACT[impact]}>
+        {[1, 2, 3].map((n) => (
+          <span key={n} className={cn("h-1.5 w-6 rounded-[2px]", n <= level ? (impact === "high" ? "bg-danger" : "bg-ink-2") : "bg-subtle-2")} />
+        ))}
+      </div>
+      <div className={cn("text-micro sm:mt-1.5", impact === "high" ? "text-danger" : "text-ink-3")}>{IMPACT[impact]}</div>
+      <div className="text-micro text-ink-3">{count} обращ.</div>
+    </div>
+  );
+}
+
+function DigestList({ icon, title, tone, empty, children }: { icon: React.ReactNode; title: string; tone?: "danger" | "ok"; empty: string; children: React.ReactNode[] }) {
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-1.5 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">
+        <span className={cn(tone === "danger" ? "text-danger" : tone === "ok" ? "text-ok" : "text-ink-2")}>{icon}</span>
+        {title}
+        <span className="mono-num normal-case tracking-normal">{children.length || ""}</span>
+      </h3>
+      {children.length ? <ul className="space-y-3">{children}</ul> : <p className="text-meta text-ink-3">{empty}</p>}
+    </section>
+  );
+}
 
 const Codes = ({ codes }: { codes: string[] }) => (
   <span className="inline-flex flex-wrap gap-1">
@@ -87,71 +117,67 @@ export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
         </p>
       )}
       {d && (
-        <div className="space-y-6 px-5 py-5">
-          {d.source === "local" && d.content.notice && <p className="text-meta text-ink-3">{d.content.notice}</p>}
-          <div>
-            <p className="text-title-md font-semibold text-ink">{d.content.headline}</p>
-            <p className="mt-1 max-w-[860px] text-body text-ink-2">{d.content.overview}</p>
-          </div>
+        <div className="px-5 py-5">
+          {d.source === "local" && d.content.notice && <p className="mb-3 text-meta text-ink-3">{d.content.notice}</p>}
+          <p className="max-w-[860px] text-title-lg font-semibold text-ink">{d.content.headline}</p>
+          <p className="mt-1.5 max-w-[860px] text-body text-ink-2">{d.content.overview}</p>
+
           {d.content.systemicProblems.length > 0 && (
-            <div>
+            <div className="mt-7">
               <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Системные проблемы</h3>
               <ol className="divide-y divide-line border-y border-line">
-                {d.content.systemicProblems.map((p, n) => (
-                  <li key={n} className="grid gap-x-6 gap-y-1 py-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                    <div>
-                      <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="text-ui font-semibold text-ink">{p.title}</span>
-                        <span className={cn("text-micro", p.impact === "high" ? "text-danger" : "text-ink-3")}>{IMPACT[p.impact]}</span>
+                {[...d.content.systemicProblems]
+                  .sort((a, b) => IMPACT_RANK[b.impact] - IMPACT_RANK[a.impact] || b.issueCodes.length - a.issueCodes.length)
+                  .map((p, n) => (
+                    <li key={n} className="grid gap-x-4 gap-y-2 py-4 sm:grid-cols-[28px_minmax(0,1fr)_132px]">
+                      <span className="mono-num hidden pt-0.5 text-title-md text-ink-3 sm:block">{String(n + 1).padStart(2, "0")}</span>
+                      <div className="min-w-0">
+                        <div className="text-ui font-semibold text-ink">{p.title}</div>
+                        <p className="mt-0.5 text-meta text-ink-2">{p.description}</p>
+                        <div className="mt-2">
+                          <Codes codes={p.issueCodes} />
+                        </div>
+                        <p className="mt-2.5 flex gap-2 rounded-ctl bg-subtle/70 px-3 py-2 text-meta text-ink">
+                          <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-accent-text" aria-hidden />
+                          <span>
+                            <span className="font-medium">Что сделать: </span>
+                            {p.recommendation}
+                          </span>
+                        </p>
                       </div>
-                      <p className="mt-0.5 text-meta text-ink-2">{p.description}</p>
-                      <div className="mt-1.5">
-                        <Codes codes={p.issueCodes} />
-                      </div>
-                    </div>
-                    <p className="text-meta text-ink">
-                      <span className="text-ink-3">Рекомендация: </span>
-                      {p.recommendation}
-                    </p>
-                  </li>
-                ))}
+                      <ImpactMeter impact={p.impact} count={p.issueCodes.length} />
+                    </li>
+                  ))}
               </ol>
             </div>
           )}
-          <div className="grid gap-6 md:grid-cols-3">
-            {d.content.quickWins.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Быстрые улучшения</h3>
-                <ul className="space-y-2">
-                  {d.content.quickWins.map((w, n) => (
-                    <li key={n} className="text-meta">
-                      <span className="text-ink">{w.title}</span> <Codes codes={w.issueCodes} />
-                      <span className="block text-ink-3">{w.why}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {d.content.risks.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Риски</h3>
-                <ul className="list-disc space-y-1 pl-4 text-meta text-ink-2 marker:text-ink-4">
-                  {d.content.risks.map((r, n) => (
-                    <li key={n}>{r}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {d.content.positiveSignals.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Позитивные сигналы</h3>
-                <ul className="list-disc space-y-1 pl-4 text-meta text-ink-2 marker:text-ink-4">
-                  {d.content.positiveSignals.map((r, n) => (
-                    <li key={n}>{r}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+
+          <div className="mt-7 grid gap-6 md:grid-cols-3">
+            <DigestList icon={<Zap className="size-3.5" />} title="Быстрые улучшения" empty="Нет предложений">
+              {d.content.quickWins.map((w, n) => (
+                <li key={n}>
+                  <span className="text-ui text-ink">{w.title}</span>
+                  <span className="mt-0.5 block text-meta text-ink-3">{w.why}</span>
+                  <span className="mt-1 block">
+                    <Codes codes={w.issueCodes} />
+                  </span>
+                </li>
+              ))}
+            </DigestList>
+            <DigestList icon={<TriangleAlert className="size-3.5" />} title="Риски" tone="danger" empty="Существенных рисков нет">
+              {d.content.risks.map((r, n) => (
+                <li key={n} className="text-meta text-ink-2">
+                  {r}
+                </li>
+              ))}
+            </DigestList>
+            <DigestList icon={<TrendingUp className="size-3.5" />} title="Позитивные сигналы" tone="ok" empty="—">
+              {d.content.positiveSignals.map((r, n) => (
+                <li key={n} className="text-meta text-ink-2">
+                  {r}
+                </li>
+              ))}
+            </DigestList>
           </div>
         </div>
       )}

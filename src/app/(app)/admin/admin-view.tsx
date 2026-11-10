@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { api, errorMessage } from "@/lib/client/api";
 import { PRIORITY_LABEL, PRIORITY_ORDER, ROLE_DESCRIPTION, ROLE_LABEL, type Priority, type Role } from "@/lib/domain";
@@ -50,9 +50,9 @@ export function AdminView() {
   const q = useQuery({ queryKey: ["admin"], queryFn: () => api.get<Overview>("/api/admin/categories") });
   return (
     <div className="pb-16">
-      <header className="px-4 pt-6 sm:px-8">
-        <h1 className="text-title-lg font-semibold">Настройки</h1>
-        <p className="text-meta text-ink-3">Изменения применяются сразу к новым обращениям. Все действия проверяются на сервере.</p>
+      <header className="px-4 pt-7 sm:px-8">
+        <h1 className="text-title-xl font-semibold">Настройки</h1>
+        <p className="mt-1 text-meta text-ink-3">Изменения применяются сразу к новым обращениям. Все действия проверяются на сервере.</p>
         <nav className="-mx-1 mt-4 flex gap-0.5 overflow-x-auto border-b border-line" aria-label="Разделы настроек">
           {TABS.map(([k, l]) => (
             <button
@@ -101,6 +101,26 @@ function Routing({ data }: { data: Overview }) {
   const saveRule = useAdminMutation((body: Record<string, unknown>) => api.put("/api/admin/routing", body), "Правило маршрутизации сохранено");
   const toggleCat = useAdminMutation(({ id, isActive }: { id: string; isActive: boolean }) => api.patch(`/api/admin/categories/${id}`, { isActive }));
   const [adding, setAdding] = useState(false);
+  const [q, setQ] = useState("");
+  const [onlyIssues, setOnlyIssues] = useState(false);
+
+  // Что требует внимания администратора в правилах маршрутизации
+  const flagsOf = (c: Overview["categories"][number]) => {
+    const rule = c.rules.find((r) => r.issueType === null);
+    const f: string[] = [];
+    if (!c.isActive) f.push("категория отключена");
+    if (rule?.mode === "FIXED" && !rule.primary) f.push("нет основного ответственного");
+    if (rule?.primary && !rule.primary.isActive) f.push("основной деактивирован");
+    else if (rule?.primary && !rule.primary.isAvailable) f.push("основной отсутствует");
+    if (!rule?.backup) f.push("нет резервного");
+    return f;
+  };
+  const withFlags = data.categories.map((c) => ({ c, flags: flagsOf(c) }));
+  const attention = withFlags.filter((x) => x.flags.length).length;
+  const needle = q.trim().toLowerCase();
+  const visible = withFlags.filter(
+    (x) => (!onlyIssues || x.flags.length) && (!needle || x.c.name.toLowerCase().includes(needle) || x.c.description.toLowerCase().includes(needle)),
+  );
 
   const userOpt = (u: (typeof handlers)[number]) => (
     <option key={u.id} value={u.id}>
@@ -111,12 +131,22 @@ function Routing({ data }: { data: Overview }) {
 
   return (
     <div className="px-4 pt-6 sm:px-8">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-[720px] text-meta text-ink-2">
-          Обращение направляется основному ответственному категории. Если он отсутствует или деактивирован — резервному, затем руководителю подразделения автора и, в крайнем
-          случае, в общую очередь руководителя направления. Так ни одно обращение не остаётся без владельца.
-        </p>
-        <Button onClick={() => setAdding((v) => !v)}>
+      <p className="mb-4 max-w-[760px] text-meta text-ink-2">
+        Цепочка маршрута: основной ответственный → резервный → руководитель подразделения автора → общая очередь руководителя направления. Ни одно обращение не остаётся без
+        владельца.
+      </p>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <SearchField value={q} onChange={setQ} label="Поиск категорий" placeholder="Найти категорию" />
+        <Segmented
+          label="Фильтр категорий"
+          value={onlyIssues ? "issues" : "all"}
+          onChange={(v) => setOnlyIssues(v === "issues")}
+          options={[
+            ["all", `Все · ${data.categories.length}`],
+            ["issues", `Требуют внимания · ${attention}`],
+          ]}
+        />
+        <Button className="ml-auto" onClick={() => setAdding((v) => !v)}>
           <Plus className="size-3.5" /> Категория
         </Button>
       </div>
@@ -134,7 +164,14 @@ function Routing({ data }: { data: Overview }) {
             </tr>
           </thead>
           <tbody>
-            {data.categories.map((c) => {
+            {visible.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-meta text-ink-3">
+                  Ничего не найдено. Измените запрос или фильтр.
+                </td>
+              </tr>
+            )}
+            {visible.map(({ c, flags }) => {
               const rule = c.rules.find((r) => r.issueType === null);
               const overrides = c.rules.filter((r) => r.issueType !== null);
               const primaryAway = rule?.primary && !rule.primary.isAvailable;
@@ -143,6 +180,7 @@ function Routing({ data }: { data: Overview }) {
                   <td className="px-3 py-2.5">
                     <span className="block text-ui font-medium text-ink">{c.name}</span>
                     <span className="block text-micro text-ink-3">{c.description}</span>
+                    {flags.length > 0 && <span className="mt-1 block text-micro text-warn">{flags.join(" · ")}</span>}
                     {overrides.map((o) => (
                       <span key={o.id} className="mt-1 block text-micro text-ink-2">
                         Положительные отзывы → {o.primary?.name}
@@ -251,16 +289,32 @@ function NewCategory({ onDone }: { onDone: () => void }) {
 
 function Users({ data }: { data: Overview }) {
   const save = useAdminMutation(({ id, ...body }: { id: string; role?: Role; isAvailable?: boolean; isActive?: boolean }) => api.patch(`/api/admin/users/${id}`, body));
+  const [q, setQ] = useState("");
+  const [role, setRole] = useState<Role | "ALL" | "AWAY">("ALL");
+  const needle = q.trim().toLowerCase();
+  const roles = Object.keys(ROLE_LABEL) as Role[];
+  const away = data.users.filter((u) => !u.isAvailable || !u.isActive).length;
+  const users = data.users.filter(
+    (u) =>
+      (role === "ALL" || (role === "AWAY" ? !u.isAvailable || !u.isActive : u.role === role)) &&
+      (!needle || `${u.name} ${u.email} ${u.title} ${u.department?.name ?? ""}`.toLowerCase().includes(needle)),
+  );
   return (
     <div className="px-4 pt-6 sm:px-8">
-      <dl className="mb-5 grid gap-3 text-meta sm:grid-cols-2 xl:grid-cols-4">
-        {(Object.keys(ROLE_LABEL) as Role[]).map((r) => (
-          <div key={r} className="border-l-2 border-line-strong pl-3">
-            <dt className="font-medium text-ink">{ROLE_LABEL[r]}</dt>
-            <dd className="text-ink-3">{ROLE_DESCRIPTION[r]}</dd>
-          </div>
-        ))}
-      </dl>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <SearchField value={q} onChange={setQ} label="Поиск пользователей" placeholder="Имя, email, подразделение" />
+        <Segmented
+          label="Фильтр по роли"
+          value={role}
+          onChange={(v) => setRole(v as Role | "ALL" | "AWAY")}
+          options={[
+            ["ALL", `Все · ${data.users.length}`],
+            ...roles.map((r) => [r, `${ROLE_LABEL[r]} · ${data.users.filter((u) => u.role === r).length}`] as [string, string]),
+            ["AWAY", `Отсутствуют · ${away}`],
+          ]}
+          hints={Object.fromEntries(roles.map((r) => [r, ROLE_DESCRIPTION[r]]))}
+        />
+      </div>
       <div className="overflow-x-auto rounded-pop border border-line">
         <table className="w-full min-w-[820px] text-left text-meta">
           <thead className="bg-canvas/60">
@@ -278,7 +332,14 @@ function Users({ data }: { data: Overview }) {
             </tr>
           </thead>
           <tbody>
-            {data.users.map((u) => (
+            {users.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-meta text-ink-3">
+                  Никого не найдено.
+                </td>
+              </tr>
+            )}
+            {users.map((u) => (
               <tr key={u.id} className={cn("border-t border-line", !u.isActive && "opacity-55")}>
                 <td className="px-3 py-2">
                   <span className="block text-ui text-ink">{u.name}</span>
@@ -499,5 +560,44 @@ function Switch({ checked, onChange, label, disabled }: { checked: boolean; onCh
     >
       <span className={cn("absolute left-0 top-0.5 size-4 rounded-full bg-surface shadow-sm transition-transform duration-150", checked ? "translate-x-[18px]" : "translate-x-0.5")} />
     </button>
+  );
+}
+
+function SearchField({ value, onChange, label, placeholder }: { value: string; onChange: (v: string) => void; label: string; placeholder: string }) {
+  return (
+    <label className="relative flex w-full items-center sm:w-64">
+      <Search className="pointer-events-none absolute left-2.5 size-3.5 text-ink-3" aria-hidden />
+      <span className="sr-only">{label}</span>
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-8 w-full rounded-ctl border border-line bg-raised pl-8 pr-2 text-ui outline-none placeholder:text-ink-4 focus:border-focus"
+      />
+    </label>
+  );
+}
+
+function Segmented({ value, onChange, options, label, hints }: { value: string; onChange: (v: string) => void; options: [string, string][]; label: string; hints?: Record<string, string> }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex max-w-full overflow-x-auto rounded-ctl bg-subtle p-0.5 scrollbar-thin">
+      {options.map(([v, l]) => (
+        <Tip key={v} content={hints?.[v]}>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={value === v}
+            onClick={() => onChange(v)}
+            className={cn(
+              "h-7 shrink-0 whitespace-nowrap rounded-[5px] px-2.5 text-label text-ink-2 transition-colors-fast hover:text-ink",
+              value === v && "bg-raised font-medium text-ink shadow-[0_1px_2px_rgba(28,27,24,.08)]",
+            )}
+          >
+            {l}
+          </button>
+        </Tip>
+      ))}
+    </div>
   );
 }

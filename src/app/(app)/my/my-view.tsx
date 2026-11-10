@@ -26,8 +26,8 @@ export function MyView() {
 
   return (
     <div className="pb-16">
-      <header className="border-b border-line px-4 pb-6 pt-8 sm:px-8">
-        <p className="text-meta text-ink-3">{viewer.department ?? ""}</p>
+      <header className="border-b border-line px-4 pb-6 pt-7 sm:px-8">
+        <p className="text-label font-medium text-ink-3">{viewer.department ?? ""}</p>
         <h1 className="mt-1 text-display font-semibold">Здравствуйте, {firstName}</h1>
         <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link
@@ -43,8 +43,8 @@ export function MyView() {
         </div>
         {sla && (
           <p className="mt-5 max-w-[640px] text-meta text-ink-3">
-            Каждое обращение сразу получает ответственного. Первая реакция — не позже {sla.HIGH.firstResponseHours} ч для срочных и {sla.LOW.firstResponseHours} ч для остальных; итог
-            рассмотрения — решение или мотивированный отказ — вы увидите здесь.
+            У каждого обращения сразу есть ответственный и срок первой реакции — от {sla.HIGH.firstResponseHours} до {sla.LOW.firstResponseHours} ч. Итог — решение или
+            мотивированный отказ — появится здесь.
           </p>
         )}
       </header>
@@ -56,7 +56,7 @@ export function MyView() {
       )}
 
       <Section title="Нужен ваш ответ" items={waiting} tone="info" />
-      <Section title="В работе" items={active} />
+      <Section title="Открытые" items={active} />
       <Section title="Завершённые" items={done} />
 
       {!!supported.data?.items.length && (

@@ -143,7 +143,7 @@ export function AppShell({ user, children }: { user: Viewer; children: React.Rea
         href="/new"
         className={cn(
           "mb-3 flex h-8 items-center gap-2 rounded-ctl px-2.5 text-ui font-medium text-ink transition-colors-fast hover:bg-subtle",
-          pathname === "/new" && "bg-accent-soft shadow-[inset_2px_0_0_var(--accent)]",
+          pathname === "/new" && "bg-accent-soft font-semibold shadow-[inset_2px_0_0_var(--accent)]",
         )}
       >
         <PenLine className="size-4" strokeWidth={1.75} />
@@ -151,9 +151,21 @@ export function AppShell({ user, children }: { user: Viewer; children: React.Rea
         <Kbd>C</Kbd>
       </Link>
 
-      <NavGroup items={main} pathname={pathname} view={view} />
-      <div className="mt-4 px-2.5 pb-1 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Лично</div>
-      <NavGroup items={personal} pathname={pathname} view={view} />
+      {user.role === "EMPLOYEE" ? (
+        <>
+          {/* у сотрудника главное — свои обращения */}
+          <NavGroup items={personal} pathname={pathname} view={view} />
+          <NavLabel>Компания</NavLabel>
+          <NavGroup items={main} pathname={pathname} view={view} />
+        </>
+      ) : (
+        <>
+          <NavLabel>Работа</NavLabel>
+          <NavGroup items={main} pathname={pathname} view={view} />
+          <NavLabel>Лично</NavLabel>
+          <NavGroup items={personal} pathname={pathname} view={view} />
+        </>
+      )}
 
       <div className="mt-auto">
         <UserMenu user={user} />
@@ -197,6 +209,10 @@ export function AppShell({ user, children }: { user: Viewer; children: React.Rea
   );
 }
 
+function NavLabel({ children }: { children: React.ReactNode }) {
+  return <div className="mt-4 px-2.5 pb-1 text-micro font-medium uppercase tracking-[0.08em] text-ink-3 first:mt-0">{children}</div>;
+}
+
 function NavGroup({ items, pathname, view }: { items: NavItem[]; pathname: string; view: string | null }) {
   return (
     <ul className="flex flex-col gap-px">
@@ -210,7 +226,7 @@ function NavGroup({ items, pathname, view }: { items: NavItem[]; pathname: strin
               aria-current={active ? "page" : undefined}
               className={cn(
                 "flex h-8 items-center gap-2.5 rounded-ctl px-2.5 text-ui text-ink-2 transition-colors-fast hover:bg-subtle hover:text-ink",
-                active && "bg-subtle-2/70 font-medium text-ink",
+                active && "bg-accent-soft font-medium text-ink shadow-[inset_2px_0_0_var(--accent)]",
               )}
             >
               <Icon className="size-4 shrink-0" strokeWidth={1.75} />

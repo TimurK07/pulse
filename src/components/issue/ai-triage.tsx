@@ -1,13 +1,13 @@
 "use client";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { ArrowUpRight, CircleHelp, Flag, RefreshCw, Route, Sparkles, Tag } from "lucide-react";
 import { api, errorMessage } from "@/lib/client/api";
 import { PRIORITY_LABEL, STATUS_LABEL, type IssueStatus, type Priority } from "@/lib/domain";
 import { fmtDateTime } from "@/lib/client/format";
 import { Button } from "@/components/ui/button";
 import { SourceBadge, StatusIcon } from "@/components/ui/status";
+import { Skeleton } from "@/components/ui/states";
 
 export interface TriageData {
   data: {
@@ -28,8 +28,11 @@ export interface TriageData {
 }
 
 /**
- * AI-разбор для ответственного. Запускается явно (защита от лишних запросов),
- * результат кэшируется в обращении и переиспользуется, пока текст не изменился.
+ * Ассистент PULSE в карточке обращения. Разделяет:
+ *  1) суть и факты, извлечённые из текста (сверяются с описанием);
+ *  2) рекомендации — каждая с отдельной кнопкой и подтверждением человеком;
+ *  3) похожие обращения (возможные дубликаты).
+ * Запускается явно (защита от лишних запросов), результат хранится в обращении.
  */
 export function AiTriage({
   code,
@@ -38,6 +41,7 @@ export function AiTriage({
   onAskQuestion,
   onApplyCategory,
   canEdit,
+  canAsk,
 }: {
   code: string;
   currentPriority: Priority;
@@ -45,9 +49,9 @@ export function AiTriage({
   onAskQuestion: (q: string) => void;
   onApplyCategory: (name: string) => void;
   canEdit: boolean;
+  canAsk: boolean;
 }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(true);
   const cached = useQuery({
     queryKey: ["triage", code],
     queryFn: () => api.get<{ triage: TriageData | null }>(`/api/issues/${code}/triage`),
@@ -62,111 +66,152 @@ export function AiTriage({
 
   if (!t) {
     return (
-      <div className="flex flex-wrap items-center gap-3 rounded-pop border border-dashed border-line-strong px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-ui font-medium text-ink">AI-разбор обращения</div>
-          <p className="text-meta text-ink-3">Резюме, проверка категории и приоритета, следующий шаг и вопрос автору. Данные автора не передаются.</p>
+      <section aria-label="Ассистент" className="rounded-pop border border-dashed border-line-strong px-4 py-3.5 sm:px-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <Sparkles className="hidden size-4 text-ink-3 sm:block" strokeWidth={1.75} />
+          <div className="min-w-0 flex-1 basis-56">
+            <div className="text-ui font-medium text-ink">Ассистент: разбор обращения</div>
+            <p className="text-meta text-ink-3">Суть, проверка категории и приоритета, вопрос автору, похожие обращения. Имя и контакты автора не передаются.</p>
+          </div>
+          <Button size="sm" onClick={() => run.mutate()} loading={run.isPending}>
+            Разобрать
+          </Button>
         </div>
-        <Button size="sm" onClick={() => run.mutate()} loading={run.isPending}>
-          Разобрать
-        </Button>
-        {run.isError && <p className="w-full text-label text-danger">{errorMessage(run.error)}</p>}
-      </div>
+        {run.isPending && (
+          <div className="mt-3 space-y-2" aria-hidden>
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-3/5" />
+          </div>
+        )}
+        {run.isError && <p className="mt-2 text-label text-danger">{errorMessage(run.error)}</p>}
+      </section>
     );
   }
 
   const d = t.data;
   const priorityDiffers = d.suggestedPriority !== currentPriority;
-  const categoryDiffers = d.categoryCheck && !d.categoryCheck.matches && d.categoryCheck.suggested;
+  const categoryDiffers = !!(d.categoryCheck && !d.categoryCheck.matches && d.categoryCheck.suggested);
+
+  const suggestions: { key: string; icon: React.ReactNode; title: string; reason: string; action?: React.ReactNode; ok?: boolean }[] = [
+    {
+      key: "next",
+      icon: <Route className="size-3.5" />,
+      title: d.suggestedNextStep,
+      reason: "Рекомендуемый следующий шаг",
+    },
+    {
+      key: "priority",
+      icon: <Flag className="size-3.5" />,
+      title: priorityDiffers ? `Приоритет: ${PRIORITY_LABEL[currentPriority].toLowerCase()} → ${PRIORITY_LABEL[d.suggestedPriority].toLowerCase()}` : `Приоритет «${PRIORITY_LABEL[d.suggestedPriority].toLowerCase()}» выбран верно`,
+      reason: d.priorityReason,
+      ok: !priorityDiffers,
+      action:
+        priorityDiffers && canEdit ? (
+          <Button size="sm" onClick={() => onApplyPriority(d.suggestedPriority)}>
+            Применить
+          </Button>
+        ) : undefined,
+    },
+    ...(d.categoryCheck
+      ? [
+          {
+            key: "category",
+            icon: <Tag className="size-3.5" />,
+            title: categoryDiffers ? `Категория: возможно, «${d.categoryCheck.suggested}»` : "Категория выбрана верно",
+            reason: d.categoryCheck.reason,
+            ok: !categoryDiffers,
+            action:
+              categoryDiffers && canEdit ? (
+                <Button size="sm" onClick={() => onApplyCategory(d.categoryCheck!.suggested!)}>
+                  Сменить
+                </Button>
+              ) : undefined,
+          },
+        ]
+      : []),
+    ...(d.clarifyingQuestion
+      ? [
+          {
+            key: "question",
+            icon: <CircleHelp className="size-3.5" />,
+            title: `«${d.clarifyingQuestion}»`,
+            reason: "Вопрос автору — без ответа решение принять трудно",
+            action:
+              canEdit && canAsk ? (
+                <Button size="sm" onClick={() => onAskQuestion(d.clarifyingQuestion!)}>
+                  Запросить уточнение
+                </Button>
+              ) : undefined,
+          },
+        ]
+      : []),
+  ];
 
   return (
-    <section aria-label="AI-разбор" className="rounded-pop border border-dashed border-line-strong">
-      {t.source === "fallback" && t.notice && <p className="border-b border-dashed border-line-strong px-4 py-2 text-meta text-ink-3">{t.notice}</p>}
-      <header className="flex items-center gap-2 px-4 pt-3">
+    <section aria-label="Ассистент" className="rounded-pop border border-line bg-raised">
+      <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 sm:px-5">
+        <Sparkles className="size-4 text-ink-2" strokeWidth={1.75} />
+        <span className="text-ui font-medium text-ink">Ассистент</span>
         <SourceBadge source={t.source} model={t.model} notice={t.notice} />
-        <span className="text-label font-medium text-ink-2">Разбор для ответственного</span>
-        <span className="text-micro text-ink-3">· {fmtDateTime(t.generatedAt)}</span>
-        {t.stale && <span className="text-micro text-warn">· обращение изменилось</span>}
-        <span className="ml-auto flex items-center gap-1">
-          <Button size="sm" variant="ghost" onClick={() => run.mutate()} loading={run.isPending} aria-label="Обновить разбор">
-            <RefreshCw className="size-3.5" />
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? "Свернуть" : "Развернуть"}>
-            <ChevronDown className={`size-3.5 transition-transform ${open ? "" : "-rotate-90"}`} />
-          </Button>
-        </span>
+        <span className="text-micro text-ink-3">{fmtDateTime(t.generatedAt)}</span>
+        {t.stale && <span className="text-micro text-warn">· обращение изменилось после разбора</span>}
+        <Button size="sm" variant="ghost" className="ml-auto" onClick={() => run.mutate()} loading={run.isPending} aria-label="Обновить разбор">
+          <RefreshCw className="size-3.5" />
+        </Button>
       </header>
-      <div className="px-4 pb-3 pt-2">
-        <p className="text-body text-ink">{d.summary}</p>
-        {open && (
-          <>
-            {d.keyPoints.length > 0 && (
-              <ul className="mt-2 list-disc space-y-0.5 pl-5 text-meta text-ink-2 marker:text-ink-4">
-                {d.keyPoints.map((k, i) => (
-                  <li key={i}>{k}</li>
-                ))}
-              </ul>
-            )}
-            <dl className="mt-3 grid gap-x-4 gap-y-2 text-meta sm:grid-cols-[132px_minmax(0,1fr)]">
-              <dt className="text-ink-3">Следующий шаг</dt>
-              <dd className="text-ink">{d.suggestedNextStep}</dd>
-              <dt className="text-ink-3">Приоритет</dt>
-              <dd className="flex flex-wrap items-center gap-2 text-ink">
-                {PRIORITY_LABEL[d.suggestedPriority]}
-                <span className="text-ink-3">— {d.priorityReason}</span>
-                {priorityDiffers && canEdit && (
-                  <Button size="sm" variant="quiet" onClick={() => onApplyPriority(d.suggestedPriority)}>
-                    Применить
-                  </Button>
-                )}
-              </dd>
-              {d.categoryCheck && (
-                <>
-                  <dt className="text-ink-3">Категория</dt>
-                  <dd className="flex flex-wrap items-center gap-2 text-ink">
-                    {d.categoryCheck.matches ? "Выбрана верно" : `Возможно, «${d.categoryCheck.suggested}»`}
-                    <span className="text-ink-3">— {d.categoryCheck.reason}</span>
-                    {categoryDiffers && canEdit && (
-                      <Button size="sm" variant="quiet" onClick={() => onApplyCategory(d.categoryCheck!.suggested!)}>
-                        Сменить
-                      </Button>
-                    )}
-                  </dd>
-                </>
-              )}
-              {d.clarifyingQuestion && (
-                <>
-                  <dt className="text-ink-3">Вопрос автору</dt>
-                  <dd className="flex flex-wrap items-center gap-2 text-ink">
-                    «{d.clarifyingQuestion}»
-                    {canEdit && (
-                      <Button size="sm" variant="quiet" onClick={() => onAskQuestion(d.clarifyingQuestion!)}>
-                        Запросить уточнение
-                      </Button>
-                    )}
-                  </dd>
-                </>
-              )}
-              {d.related.length > 0 && (
-                <>
-                  <dt className="text-ink-3">Похожие</dt>
-                  <dd className="space-y-1">
-                    {d.related.map((r) => (
-                      <Link key={r.code} href={`/issues/${r.code}`} className="flex items-center gap-2 text-ink hover:underline">
-                        <StatusIcon status={r.status as IssueStatus} size={12} />
-                        <span className="mono-id shrink-0 whitespace-nowrap text-ink-3">{r.code}</span>
-                        <span className="truncate">{r.title}</span>
-                        <span className="shrink-0 text-ink-3">· {STATUS_LABEL[r.status as IssueStatus]}</span>
-                      </Link>
-                    ))}
-                  </dd>
-                </>
-              )}
-            </dl>
-            <p className="mt-3 text-micro text-ink-3">Подсказка не применяется автоматически — решение остаётся за ответственным.</p>
-          </>
+      {t.source === "fallback" && t.notice && <p className="border-b border-line bg-subtle/50 px-4 py-2 text-meta text-ink-3 sm:px-5">{t.notice}</p>}
+
+      <div className="grid gap-5 px-4 py-4 sm:px-5">
+        <div>
+          <p className="text-body text-ink">{d.summary}</p>
+          {d.keyPoints.length > 0 && (
+            <ul className="mt-2.5 space-y-1 border-l-2 border-line pl-3">
+              {d.keyPoints.map((k, n) => (
+                <li key={n} className="text-meta text-ink-2">
+                  {k}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1.5 text-micro text-ink-3">Суть и факты извлечены из текста и переписки — сверяйте с описанием.</p>
+        </div>
+
+        <div>
+          <h3 className="mb-1.5 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Рекомендации · решение за вами</h3>
+          <ul className="divide-y divide-line rounded-ctl border border-line">
+            {suggestions.map((s) => (
+              <li key={s.key} className="flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2.5">
+                <span className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full ${s.ok ? "bg-ok-soft text-ok" : "bg-subtle text-ink-2"}`}>{s.icon}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-ui text-ink">{s.title}</span>
+                  <span className="block text-meta text-ink-3">{s.reason}</span>
+                </span>
+                {s.action && <span className="shrink-0">{s.action}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {d.related.length > 0 && (
+          <div>
+            <h3 className="mb-1.5 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Похожие обращения · возможные дубликаты</h3>
+            <ul className="space-y-1">
+              {d.related.map((r) => (
+                <li key={r.code}>
+                  <Link href={`/issues/${r.code}`} className="group flex items-center gap-2 rounded-ctl px-1 py-1 text-meta text-ink transition-colors-fast hover:bg-subtle">
+                    <StatusIcon status={r.status as IssueStatus} size={12} />
+                    <span className="mono-id shrink-0 whitespace-nowrap text-ink-3">{r.code}</span>
+                    <span className="min-w-0 truncate">{r.title}</span>
+                    <span className="hidden shrink-0 text-ink-3 sm:inline">· {STATUS_LABEL[r.status as IssueStatus]}</span>
+                    <ArrowUpRight className="ml-auto size-3.5 shrink-0 text-ink-4 group-hover:text-ink-2" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
+      <p className="border-t border-line px-4 py-2 text-micro text-ink-3 sm:px-5">Ассистент ничего не меняет сам: каждое действие подтверждаете вы.</p>
     </section>
   );
 }
