@@ -1,0 +1,320 @@
+// PULSE — схема данных
+// Документация решений: docs/ARCHITECTURE.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Роли. Права проверяются на сервере: src/lib/permissions.ts
+enum Role {
+  EMPLOYEE // сотрудник: подаёт и отслеживает свои обращения
+  HANDLER // ответственный: обрабатывает обращения своих категорий
+  MANAGER // руководитель направления: видит всё, назначает, контролирует сроки
+  ADMIN // администратор: настройки, категории, маршрутизация, роли
+}
+
+enum IssueType {
+  PROBLEM // Проблема
+  IDEA // Предложение
+  PRAISE // Положительный отзыв
+}
+
+enum IssueStatus {
+  NEW // Новое
+  IN_REVIEW // На рассмотрении
+  NEEDS_INFO // Ожидает уточнения
+  IN_PROGRESS // В работе
+  IMPLEMENTED // Реализовано
+  REJECTED // Отклонено
+  CLOSED // Закрыто
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RoutingMode {
+  FIXED // конкретный ответственный (+ резервный)
+  AUTHOR_DEPARTMENT_HEAD // руководитель подразделения автора
+}
+
+enum CommentKind {
+  COMMENT // публичный ответ, виден автору
+  INTERNAL // внутренняя заметка, видна только обработчикам
+  INFO_REQUEST // запрос уточнения у автора
+  INFO_RESPONSE // ответ автора на запрос
+}
+
+enum EventType {
+  CREATED
+  ROUTED
+  ASSIGNED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  CATEGORY_CHANGED
+  DUE_CHANGED
+  DECISION
+  ESCALATED
+  SUPPORTED
+  ATTACHMENT_ADDED
+}
+
+model Department {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  headId    String? @unique
+  head      User?   @relation("DepartmentHead", fields: [headId], references: [id])
+  members   User[]  @relation("DepartmentMembers")
+  issues    Issue[]
+  sortOrder Int     @default(0)
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  name         String
+  title        String // должность
+  passwordHash String
+  role         Role        @default(EMPLOYEE)
+  departmentId String?
+  department   Department? @relation("DepartmentMembers", fields: [departmentId], references: [id])
+  headOf       Department? @relation("DepartmentHead")
+  isActive     Boolean     @default(true)
+  /// false — в отпуске/недоступен: маршрутизация уходит резервному
+  isAvailable  Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+
+  authoredIssues Issue[]        @relation("IssueAuthor")
+  assignedIssues Issue[]        @relation("IssueAssignee")
+  decidedIssues  Issue[]        @relation("IssueDecider")
+  comments       Comment[]
+  events         IssueEvent[]
+  attachments    Attachment[]
+  supports       Supporter[]
+  notifications  Notification[]
+  primaryRules   RoutingRule[]  @relation("RulePrimary")
+  backupRules    RoutingRule[]  @relation("RuleBackup")
+}
+
+model Category {
+  id          String        @id @default(cuid())
+  name        String        @unique
+  description String        @default("")
+  /// Ключевые слова для локального классификатора (fallback без AI)
+  keywords    String[]      @default([])
+  isActive    Boolean       @default(true)
+  sortOrder   Int           @default(0)
+  issues      Issue[]
+  rules       RoutingRule[]
+}
+
+/// Правило маршрутизации: категория (+ необязательно тип обращения) → ответственный
+model RoutingRule {
+  id         String      @id @default(cuid())
+  categoryId String
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  /// null — правило для всех типов; иначе — переопределение для конкретного типа
+  issueType  IssueType?
+  mode       RoutingMode @default(FIXED)
+  primaryId  String?
+  primary    User?       @relation("RulePrimary", fields: [primaryId], references: [id])
+  backupId   String?
+  backup     User?       @relation("RuleBackup", fields: [backupId], references: [id])
+  updatedAt  DateTime    @updatedAt
+
+  @@unique([categoryId, issueType])
+}
+
+/// Нормативы сроков по приоритету
+model SlaPolicy {
+  priority           Priority @id
+  firstResponseHours Int
+  resolutionDays     Int
+}
+
+model Issue {
+  id               String      @id @default(cuid())
+  number           Int         @unique @default(autoincrement())
+  code             String      @unique
+  type             IssueType
+  title            String
+  description      String
+  proposedSolution String?
+  categoryId       String
+  category         Category    @relation(fields: [categoryId], references: [id])
+  /// подразделение автора на момент подачи
+  departmentId     String?
+  department       Department? @relation(fields: [departmentId], references: [id])
+  authorId         String
+  author           User        @relation("IssueAuthor", fields: [authorId], references: [id])
+  /// имя автора скрыто от обработчиков
+  isAnonymous      Boolean     @default(false)
+  /// не показывать коллегам (в похожих и на доске результатов)
+  isPrivate        Boolean     @default(false)
+
+  status     IssueStatus @default(NEW)
+  priority   Priority    @default(MEDIUM)
+  assigneeId String?
+  assignee   User?       @relation("IssueAssignee", fields: [assigneeId], references: [id])
+  /// человекочитаемое объяснение, как выбран ответственный
+  routingNote String?
+
+  firstResponseDueAt DateTime
+  dueAt              DateTime
+  firstResponseAt    DateTime?
+  resolvedAt         DateTime?
+  /// эскалация просрочки решения (однократная до изменения срока/переоткрытия)
+  escalatedAt        DateTime?
+  /// эскалация просрочки первой реакции
+  reactionEscalatedAt DateTime?
+
+  decision     String?
+  decisionAt   DateTime?
+  decidedById  String?
+  decidedBy    User?     @relation("IssueDecider", fields: [decidedById], references: [id])
+
+  supportersCount Int @default(0)
+
+  /// кэш AI-разбора для обработчика (резюме, следующий шаг) + хэш входа
+  aiTriage     Json?
+  aiTriageHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments    Comment[]
+  events      IssueEvent[]
+  attachments Attachment[]
+  supporters  Supporter[]
+  notifications Notification[]
+
+  @@index([status])
+  @@index([status, dueAt])
+  @@index([assigneeId])
+  @@index([authorId])
+  @@index([categoryId])
+  @@index([createdAt])
+}
+
+model Comment {
+  id        String      @id @default(cuid())
+  issueId   String
+  issue     Issue       @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User        @relation(fields: [authorId], references: [id])
+  kind      CommentKind @default(COMMENT)
+  body      String
+  createdAt DateTime    @default(now())
+
+  @@index([issueId, createdAt])
+}
+
+model IssueEvent {
+  id        String    @id @default(cuid())
+  issueId   String
+  issue     Issue     @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?     @relation(fields: [actorId], references: [id])
+  type      EventType
+  fromValue String?
+  toValue   String?
+  note      String?
+  /// событие видно только обработчикам
+  internal  Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@index([issueId, createdAt])
+}
+
+model Attachment {
+  id         String   @id @default(cuid())
+  issueId    String
+  issue      Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  uploaderId String
+  uploader   User     @relation(fields: [uploaderId], references: [id])
+  fileName   String
+  mimeType   String
+  size       Int
+  storageKey String   @unique
+  createdAt  DateTime @default(now())
+}
+
+model Supporter {
+  issueId   String
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@id([issueId, userId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issueId   String?
+  issue     Issue?    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  title     String
+  body      String    @default("")
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+/// Журнал AI-вызовов: учёт токенов, стоимости, ошибок и fallback
+model AiUsage {
+  id           String   @id @default(cuid())
+  feature      String
+  model        String
+  /// ai | cache | fallback | blocked | error
+  outcome      String
+  reason       String?
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costUsd      Float    @default(0)
+  latencyMs    Int      @default(0)
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+/// Кэш результатов AI по хэшу входных данных
+model AiCache {
+  key       String   @id
+  feature   String
+  model     String
+  value     Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+/// Аналитические сводки для руководства (AI или локальная)
+model AiDigest {
+  id          String   @id @default(cuid())
+  /// ai | local
+  source      String
+  model       String?
+  content     Json
+  issuesCount Int
+  createdById String?
+  createdAt   DateTime @default(now())
+}
+
+/// Ключ-значение для системных настроек (например, включение AI)
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,77 @@
+// Схемы валидации входных данных (используются сервером; клиент повторяет ограничения в формах)
+import { z } from "zod";
+import { LIMITS } from "./domain";
+
+// Сообщения валидации по умолчанию — на русском
+z.config(z.locales.ru());
+
+const trimmed = (min: number, max: number, label: string) =>
+  z
+    .string({ error: `${label}: обязательное поле` })
+    .transform((s) => s.replace(/\u0000/g, "").trim())
+    .pipe(
+      z
+        .string()
+        .min(min, `${label}: минимум ${min} символов`)
+        .max(max, `${label}: максимум ${max} символов`),
+    );
+
+export const issueTypeSchema = z.enum(["PROBLEM", "IDEA", "PRAISE"]);
+export const statusSchema = z.enum(["NEW", "IN_REVIEW", "NEEDS_INFO", "IN_PROGRESS", "IMPLEMENTED", "REJECTED", "CLOSED"]);
+export const prioritySchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
+
+export const createIssueSchema = z.object({
+  type: issueTypeSchema,
+  categoryId: z.string().min(1, "Выберите категорию"),
+  title: trimmed(LIMITS.titleMin, LIMITS.titleMax, "Заголовок"),
+  description: trimmed(LIMITS.descriptionMin, LIMITS.descriptionMax, "Описание"),
+  proposedSolution: z
+    .string()
+    .max(LIMITS.solutionMax)
+    .optional()
+    .transform((s) => (s?.trim() ? s.trim() : undefined)),
+  isAnonymous: z.boolean().default(false),
+  isPrivate: z.boolean().default(false),
+  /** код обращения, которое автор видел как похожее, но решил подать своё */
+  acknowledgedSimilar: z.array(z.string()).max(10).optional(),
+});
+export type CreateIssueInput = z.infer<typeof createIssueSchema>;
+
+export const updateIssueSchema = z
+  .object({
+    status: statusSchema.optional(),
+    /** текст, обязательный для некоторых переходов (вопрос, решение, отказ) */
+    text: z.string().max(LIMITS.commentMax).optional(),
+    priority: prioritySchema.optional(),
+    assigneeId: z.string().nullable().optional(),
+    categoryId: z.string().optional(),
+    dueAt: z.iso.datetime({ offset: true }).optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), "Нет изменений");
+
+export const commentSchema = z.object({
+  body: trimmed(1, LIMITS.commentMax, "Комментарий"),
+  kind: z.enum(["COMMENT", "INTERNAL"]).default("COMMENT"),
+});
+
+export const listQuerySchema = z.object({
+  view: z
+    .enum(["mine", "supported", "queue", "attention", "no_response", "overdue", "needs_info", "open", "resolved", "all"])
+    .default("open"),
+  status: z.array(statusSchema).optional(),
+  type: issueTypeSchema.optional(),
+  categoryId: z.string().optional(),
+  departmentId: z.string().optional(),
+  assignee: z.string().optional(), // id | "me" | "none"
+  priority: prioritySchema.optional(),
+  q: z.string().max(200).optional(),
+  sort: z.enum(["created_desc", "created_asc", "deadline", "priority", "supporters"]).default("created_desc"),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+export type ListQuery = z.infer<typeof listQuerySchema>;
+
+export const aiTextSchema = z.object({
+  title: z.string().max(LIMITS.titleMax).optional().default(""),
+  description: z.string().max(LIMITS.descriptionMax).default(""),
+  type: issueTypeSchema.optional(),
+});
