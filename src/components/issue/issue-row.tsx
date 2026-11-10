@@ -8,7 +8,7 @@ import { fmtShort } from "@/lib/client/format";
 import { Avatar, CategoryTag, PriorityIcon, SlaTimer, StatusGlyph, StatusPill } from "@/components/ui/status";
 import { Tip } from "@/components/ui/tooltip";
 
-/** Строка очереди обработчика — плотная, 40px (см. design-research 3.11) */
+/** Строка очереди обработчика — плотная, 40px */
 export function QueueRow({ issue, compact = false }: { issue: IssueListItem; compact?: boolean }) {
   return (
     <Link

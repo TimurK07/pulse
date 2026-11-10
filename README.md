@@ -24,15 +24,15 @@ PULSE — единый канал, через который сотрудник�
 
 **Пульс руководителя**
 
-![Пульс руководителя](docs/design-audit/after/10-pulse.jpg)
+![Пульс руководителя](docs/screenshots/pulse.jpg)
 
 **Карточка обращения с ассистентом**
 
-![Карточка обращения](docs/design-audit/after/06-issue-staff.jpg)
+![Карточка обращения](docs/screenshots/issue.jpg)
 
 **Подача обращения: категория и похожие обращения**
 
-![Подача обращения](docs/design-audit/after/04-new-review.jpg)
+![Подача обращения](docs/screenshots/new-issue.jpg)
 
 ## Tech Stack
 
@@ -81,4 +81,3 @@ npm run dev
 
 - [Продуктовая концепция](docs/PRODUCT.md) — проблема, пользователи, сценарии, MVP, KPI, план развития
 - [Архитектура](docs/ARCHITECTURE.md) — компоненты, данные, API, безопасность, AI
-- [Отчёт о качестве](docs/QA_REPORT.md) — тесты, аудит безопасности, ограничения

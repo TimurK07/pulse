@@ -53,3 +53,8 @@ uploads/*
 /scripts/screens.mjs
 /AGENTS.md
 /.claude/
+/docs/design-research.md
+/docs/DESIGN_AUDIT.md
+/docs/QA_REPORT.md
+/docs/design-audit/
+/scripts/design-shots.mjs
