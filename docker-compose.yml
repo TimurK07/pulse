@@ -1,14 +1,57 @@
-# Необязательно: PostgreSQL для локального запуска, если он не установлен
 services:
   db:
     image: postgres:17
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${PULSE_DB_PASSWORD:-postgres}
       POSTGRES_DB: pulse
-    ports:
-      - "5432:5432"
     volumes:
       - pulse-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "pulse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    init: true
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PULSE_BIND:-127.0.0.1}:${PULSE_PORT:-3000}:3000"
+    environment:
+      PULSE_DB_PASSWORD: ${PULSE_DB_PASSWORD:-postgres}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_ENABLED: ${AI_ENABLED:-true}
+      AI_MODEL_FAST: ${AI_MODEL_FAST:-}
+      AI_MODEL_SMART: ${AI_MODEL_SMART:-}
+      AI_DAILY_BUDGET_USD: ${AI_DAILY_BUDGET_USD:-1.00}
+      AI_USER_LIMIT_PER_10MIN: ${AI_USER_LIMIT_PER_10MIN:-20}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-20000}
+      BITRIX24_WEBHOOK_URL: ${BITRIX24_WEBHOOK_URL:-}
+      BITRIX24_DIALOG_ID: ${BITRIX24_DIALOG_ID:-}
+      BITRIX24_ENABLED: ${BITRIX24_ENABLED:-}
+      PULSE_PUBLIC_URL: ${PULSE_PUBLIC_URL:-}
+      CRON_SECRET: ${CRON_SECRET:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    volumes:
+      - pulse-uploads:/app/uploads
+      - pulse-session:/app/.pulse
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   pulse-db:
+  pulse-uploads:
+  pulse-session:

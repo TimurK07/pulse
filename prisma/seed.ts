@@ -2,7 +2,7 @@
 // Обращения A-001…A-020 перенесены из «Датасет.docx» (синтетический набор организаторов).
 // Имена пользователей вымышлены; совпадения с реальными людьми случайны.
 // Даты строятся относительно момента запуска seed, чтобы аналитика и сроки всегда были «живыми».
-import { PrismaClient, type IssueStatus, type IssueType, type Priority, type CommentKind, type EventType } from "@prisma/client";
+import { PrismaClient, type Prisma, type IssueStatus, type IssueType, type Priority, type CommentKind, type EventType } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const db = new PrismaClient();
@@ -303,21 +303,30 @@ const SEED_FILES = [
   },
 ];
 
-async function main() {
-  // Seed полностью очищает базу. Защита от случайного запуска на рабочих данных:
-  // если в базе есть пользователи не из демо-набора, нужен явный SEED_FORCE=1.
-  const realUsers = await db.user.count({ where: { NOT: { email: { endsWith: "@pulse.demo" } } } });
-  if (realUsers > 0 && process.env.SEED_FORCE !== "1") {
-    console.error(`PULSE seed остановлен: в базе ${realUsers} пользователей не из демо-набора. Seed удалит все данные. Если это действительно нужно — SEED_FORCE=1.`);
-    process.exit(1);
+const onlyIfEmpty = process.argv.includes("--if-empty");
+
+async function main(db: Prisma.TransactionClient) {
+  if (onlyIfEmpty) {
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(808621)`;
+    if (await db.user.count() || await db.department.count() || await db.issue.count()) {
+      console.log("PULSE seed: база уже содержит данные.");
+      return;
+    }
+  } else {
+    // Seed полностью очищает базу. Защита от случайного запуска на рабочих данных:
+    // если в базе есть пользователи не из демо-набора, нужен явный SEED_FORCE=1.
+    const realUsers = await db.user.count({ where: { NOT: { email: { endsWith: "@pulse.demo" } } } });
+    if (realUsers > 0 && process.env.SEED_FORCE !== "1") {
+      throw new Error(`PULSE seed остановлен: в базе ${realUsers} пользователей не из демо-набора. Seed удалит все данные. Если это действительно нужно — SEED_FORCE=1.`);
+    }
+    console.log("PULSE seed: очистка…");
+    await db.$executeRawUnsafe(
+      `TRUNCATE "Notification","Supporter","Attachment","FileBlob","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
+    );
+    await db.department.updateMany({ data: { headId: null } });
+    await db.user.deleteMany();
+    await db.department.deleteMany();
   }
-  console.log("PULSE seed: очистка…");
-  await db.$executeRawUnsafe(
-    `TRUNCATE "Notification","Supporter","Attachment","FileBlob","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
-  );
-  await db.department.updateMany({ data: { headId: null } });
-  await db.user.deleteMany();
-  await db.department.deleteMany();
 
   for (const [p, v] of Object.entries(SLA)) {
     await db.slaPolicy.create({ data: { priority: p as Priority, firstResponseHours: v.h, resolutionDays: v.d } });
@@ -481,7 +490,7 @@ async function main() {
   console.log(process.env.SEED_PASSWORD ? "Пароль аккаунтов задан через SEED_PASSWORD" : `Демо-пароль для всех аккаунтов: ${DEMO_PASSWORD}`);
 }
 
-main()
+db.$transaction(main, { timeout: 60_000 })
   .catch((e) => {
     console.error(e);
     process.exit(1);
