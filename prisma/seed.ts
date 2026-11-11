@@ -2,7 +2,7 @@
 // Обращения A-001…A-020 перенесены из «Датасет.docx» (синтетический набор организаторов).
 // Имена пользователей вымышлены; совпадения с реальными людьми случайны.
 // Даты строятся относительно момента запуска seed, чтобы аналитика и сроки всегда были «живыми».
-import { PrismaClient, type IssueStatus, type IssueType, type Priority, type CommentKind, type EventType } from "@prisma/client";
+import { PrismaClient, type Prisma, type IssueStatus, type IssueType, type Priority, type CommentKind, type EventType } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -303,14 +303,24 @@ const SEED_FILES = [
   },
 ];
 
-async function main() {
-  console.log("PULSE seed: очистка…");
-  await db.$executeRawUnsafe(
-    `TRUNCATE "Notification","Supporter","Attachment","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
-  );
-  await db.department.updateMany({ data: { headId: null } });
-  await db.user.deleteMany();
-  await db.department.deleteMany();
+const onlyIfEmpty = process.argv.includes("--if-empty");
+
+async function main(db: Prisma.TransactionClient) {
+  if (onlyIfEmpty) {
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(808621)`;
+    if (await db.user.count() || await db.department.count() || await db.issue.count()) {
+      console.log("PULSE seed: база уже содержит данные.");
+      return;
+    }
+  } else {
+    console.log("PULSE seed: очистка…");
+    await db.$executeRawUnsafe(
+      `TRUNCATE "Notification","Supporter","Attachment","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
+    );
+    await db.department.updateMany({ data: { headId: null } });
+    await db.user.deleteMany();
+    await db.department.deleteMany();
+  }
 
   for (const [p, v] of Object.entries(SLA)) {
     await db.slaPolicy.create({ data: { priority: p as Priority, firstResponseHours: v.h, resolutionDays: v.d } });
@@ -471,7 +481,7 @@ async function main() {
   console.log(`Демо-пароль для всех аккаунтов: ${DEMO_PASSWORD}`);
 }
 
-main()
+db.$transaction(main, { timeout: 60_000 })
   .catch((e) => {
     console.error(e);
     process.exit(1);

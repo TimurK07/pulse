@@ -42,7 +42,23 @@ Next.js 16 · React 19 · TypeScript · PostgreSQL · Prisma · Tailwind CSS · 
 
 ## Quick Start
 
-Нужны Node.js 22+ и PostgreSQL 15+. Если PostgreSQL не установлен, его можно поднять командой `docker compose up -d`.
+Установите Docker с Docker Compose. Из каталога репозитория выполните:
+
+```bash
+docker compose up -d --build --wait
+```
+
+Откройте [http://localhost:3000](http://localhost:3000) и выберите демо-роль на странице входа. Docker запустит PostgreSQL и PULSE, применит миграции и загрузит демо-данные при первом запуске на пустой базе. Node.js, PostgreSQL и файл `.env` на компьютере для этого запуска не нужны.
+
+PostgreSQL, вложения и автоматически созданный секрет сессий хранятся в томах Docker. Остановить сервисы можно через `docker compose down`. Для другого порта, например 8080, запустите `PULSE_PORT=8080 docker compose up -d --build --wait`.
+
+По умолчанию веб-интерфейс доступен с машины, где запущен Docker. Для доступа по сети можно задать `PULSE_BIND=0.0.0.0`. Демо-вход использует общие пароли, поэтому держите такой запуск в доверенной сети. При работе через HTTPS задайте `SESSION_COOKIE_SECURE=true`.
+
+Дополнительные настройки Docker Compose можно задать через переменные окружения или файл `.env` рядом с `docker-compose.yml`. Ключ Anthropic и вебхук Битрикс24 необязательны.
+
+### Запуск для разработки без Docker
+
+Нужны Node.js 22+ и доступный PostgreSQL 15+.
 
 ```bash
 npm install
