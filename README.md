@@ -66,7 +66,7 @@ npm run dev
 
 Приложение откроется на http://localhost:3000.
 
-Проверки: `npm test`, `npm run test:integration`, `npm run test:e2e` — всего 135 автотестов.
+Проверки: `npm test`, `npm run test:integration`, `npm run test:e2e` — всего 141 автотест.
 
 ## Demo Access
 
