@@ -41,10 +41,22 @@ describe("Битрикс24: текст сообщений", () => {
     expect(m).not.toContain("Секретная причина");
     expect(m).toContain("конфиденциальное обращение");
   });
-  it("BB-коды из текста пользователя не ломают сообщение", () => {
+  it("BB-коды из текста пользователя не становятся разметкой", () => {
     const m = formatBitrixMessage({ kind: "escalated", ...base, title: "Ок [URL=https://evil]клик[/URL] [USER=all]", note: "Просрочен срок решения", assignee: null }, null);
-    expect(m).not.toMatch(/evil|\[USER/);
+    expect(m).not.toMatch(/\[URL=https:\/\/evil|\[USER/i);
+    expect(m).toContain("⟦URL=https://evil⟧");
     expect(m).toContain("просрочен срок решения");
+  });
+  it("регрессия: вложенные теги не собираются в ссылку после очистки", () => {
+    for (const title of ["[[b]URL=https://evil.example/login]Срочно войдите[/[b]URL]", "[[i]USER=1]x[/[i]USER]", "[[u]SEND=/do]кнопка[/[u]SEND]", "[QUOTE]x[/QUOTE] [ATTACH=1]"]) {
+      const m = formatBitrixMessage({ kind: "created", ...base, title, type: "PROBLEM", category: "Кат [B]x[/B]", assignee: "Имя [USER=5]", backup: false }, null);
+      // единственные теги в сообщении — служебные [B]…[/B] заголовка
+      expect(m.match(/\[[^\]]*\]/g)).toEqual(["[B]", "[/B]"]);
+    }
+  });
+  it("нестандартный адрес вебхука маскируется целиком", () => {
+    expect(maskWebhook("https://portal.bitrix24.ru/rest/secretcode/")).toBe("https://portal.bitrix24.ru/…");
+    expect(maskWebhook("not a url secret")).toBe("…");
   });
 });
 
@@ -86,10 +98,18 @@ describe("Битрикс24: системное решение и сводка", 
       "https://pulse.example.ru",
     );
     expect(m).toContain("[B]Системное решение · реализовано[/B]");
-    expect(m).toContain("«Прозрачность статусов» — 3 обращения: A-002, A-005, A-011");
+    expect(m).toContain("«Прозрачность ⟦B⟧статусов⟦/B⟧» — 3 обращения: A-002, A-005, A-011");
     expect(m).toContain("Владелец темы: Олег Петров · решение: Андрей Соколов · уведомлено сотрудников: 9");
     expect(m).toContain("[URL=https://pulse.example.ru/issues/A-002]");
-    expect(m).not.toContain("evil");
+    expect(m).not.toContain("[URL=http://evil");
+  });
+  it("тема с конфиденциальными обращениями: их коды не перечисляются, ссылка на публичное", () => {
+    const m = formatBitrixMessage(
+      { kind: "theme", title: "Сроки", status: "IN_PROGRESS", text: "План решения по теме", codes: ["A-011"], hidden: 2, owner: null, by: "Андрей Соколов", notified: 3 },
+      "https://pulse.example.ru",
+    );
+    expect(m).toContain("3 обращения: A-011 и ещё 2 конфиденциальных");
+    expect(m).toContain("[URL=https://pulse.example.ru/issues/A-011]");
   });
   it("сводка — заголовок, топ-3 проблем с рекомендациями и ссылка на аналитику, не длиннее 2000", () => {
     const problems = Array.from({ length: 5 }, (_, i) => ({ title: `Проблема ${i + 1}`, codes: ["A-002", "A-005"], impact: "high" as const, recommendation: "Назначить владельца ".repeat(30) }));
@@ -105,14 +125,15 @@ describe("Битрикс24: системное решение и сводка", 
 });
 
 describe("Битрикс24: сводка без конфиденциальных обращений", () => {
-  it("проблема только из конфиденциальных не уходит, их коды вырезаются из остальных", () => {
+  it("проблема с любым конфиденциальным обращением не уходит: её заголовок мог пересказать его", () => {
     const r = shareableProblems(
       [
-        { title: "Публичная", issueCodes: ["A-002", "A-020"], impact: "high", recommendation: "x" },
+        { title: "Публичная", issueCodes: ["A-002", "A-011"], impact: "high", recommendation: "x" },
+        { title: "Смешанная", issueCodes: ["A-002", "A-020"], impact: "high", recommendation: "z" },
         { title: "Только конфиденциальные", issueCodes: ["A-020"], impact: "medium", recommendation: "y" },
       ],
       new Set(["A-020"]),
     );
-    expect(r).toEqual([{ title: "Публичная", codes: ["A-002"], impact: "high", recommendation: "x" }]);
+    expect(r).toEqual([{ title: "Публичная", codes: ["A-002", "A-011"], impact: "high", recommendation: "x" }]);
   });
 });

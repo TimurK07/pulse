@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { STATUS_LABEL, TYPE_LABEL, type IssueStatus, type IssueType } from "@/lib/domain";
 
 /**
@@ -19,7 +20,7 @@ export type BitrixEvent =
   | { kind: "escalated"; code: string; title: string; note: string; assignee: string | null; isPrivate: boolean }
   | { kind: "decision"; code: string; title: string; status: IssueStatus; text: string; by: string; isPrivate: boolean }
   | { kind: "info_answered"; code: string; title: string; assignee: string | null; isPrivate: boolean }
-  | { kind: "theme"; title: string; status: IssueStatus; text: string; codes: string[]; owner: string | null; by: string; notified: number }
+  | { kind: "theme"; title: string; status: IssueStatus; text: string; codes: string[]; hidden?: number; owner: string | null; by: string; notified: number }
   | {
       kind: "digest";
       headline: string;
@@ -59,14 +60,27 @@ export function bitrixConfig(env: NodeJS.ProcessEnv = process.env): BitrixConfig
 
 /** https://portal.bitrix24.ru/rest/1/abcdef123456/ → https://portal.bitrix24.ru/rest/1/ab…56/ */
 export function maskWebhook(url: string) {
+  // нестандартный адрес целиком считаем секретом: показываем только хост
+  if (!/\/rest\/\d+\/[^/]+/.test(url)) {
+    try {
+      return `${new URL(url).origin}/…`;
+    } catch {
+      return "…";
+    }
+  }
   return url.replace(/(\/rest\/\d+\/)([^/]+)/, (_m, p: string, code: string) => `${p}${code.length > 4 ? `${code.slice(0, 2)}…${code.slice(-2)}` : "…"}`);
 }
 
-/** Текст BB-кода Битрикс24 не должен ломаться пользовательским текстом */
-function clean(s: string, max = 300) {
-  const t = s.replace(/\[(\/?)(b|i|u|s|url|user|chat|send|put|call|img|icon|code|size|color|br)[^\]]*\]/gi, "").replace(/\s+/g, " ").trim();
+/**
+ * Пользовательский и AI-текст не должен становиться BB-кодом Битрикс24 (ссылки, упоминания,
+ * кнопки команд). Удаление тегов обходится вложенностью («[[b]URL=…]»), поэтому квадратные
+ * скобки заменяются на похожие символы — разметка из текста не интерпретируется никогда.
+ */
+export function clean(s: string, max = 300) {
+  const t = s.replace(/\[/g, "⟦").replace(/\]/g, "⟧").replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
+const nm = (s: string | null | undefined, fallback = "не назначен") => (s ? clean(s, 80) : fallback);
 
 export function formatBitrixMessage(e: BitrixEvent, publicUrl: string | null): string {
   if (e.kind === "test") {
@@ -81,23 +95,23 @@ export function formatBitrixMessage(e: BitrixEvent, publicUrl: string | null): s
   switch (e.kind) {
     case "created":
       head = `${e.code} · ${TYPE_LABEL[e.type]}`;
-      body = `${title}\nКатегория: ${clean(e.category, 80)} · ответственный: ${e.assignee ?? "не назначен"}${e.backup ? " (резервный — основной отсутствует)" : ""}`;
+      body = `${title}\nКатегория: ${clean(e.category, 80)} · ответственный: ${nm(e.assignee)}${e.backup ? " (резервный — основной отсутствует)" : ""}`;
       break;
     case "assigned":
       head = `${e.code} · переназначено`;
-      body = `${title}\nНовый ответственный: ${e.to ?? "не назначен"}`;
+      body = `${title}\nНовый ответственный: ${nm(e.to)}`;
       break;
     case "escalated":
       head = `${e.code} · ${e.note.toLowerCase()}`;
-      body = `${title}\nОтветственный: ${e.assignee ?? "не назначен"}`;
+      body = `${title}\nОтветственный: ${nm(e.assignee)}`;
       break;
     case "decision":
       head = `${e.code} · ${STATUS_LABEL[e.status].toLowerCase()}`;
-      body = e.isPrivate ? `${title}\nРешение: ${e.by}` : `${title}\n${clean(e.text, 300)}\nРешение: ${e.by}`;
+      body = e.isPrivate ? `${title}\nРешение: ${nm(e.by)}` : `${title}\n${clean(e.text, 300)}\nРешение: ${nm(e.by)}`;
       break;
     case "info_answered":
       head = `${e.code} · автор ответил на уточнение`;
-      body = `${title}\nОтветственный: ${e.assignee ?? "не назначен"}`;
+      body = `${title}\nОтветственный: ${nm(e.assignee)}`;
       break;
   }
   return limit(`[B]${head}[/B]\n${body}${link}`);
@@ -115,12 +129,14 @@ const plural = (n: number, one: string, few: string, many: string) => {
 
 /** Одно сообщение на всю тему. Коды обращений без заголовков — конфиденциальные не раскрываются */
 function formatTheme(e: Extract<BitrixEvent, { kind: "theme" }>, publicUrl: string | null) {
-  const n = e.codes.length;
+  const hidden = e.hidden ?? 0;
+  const n = e.codes.length + hidden;
+  const list = [e.codes.join(", "), hidden ? `ещё ${hidden} ${plural(hidden, "конфиденциальное", "конфиденциальных", "конфиденциальных")}` : ""].filter(Boolean).join(" и ");
   const lines = [
     `[B]Системное решение · ${STATUS_LABEL[e.status].toLowerCase()}[/B]`,
-    `«${clean(e.title, 120)}» — ${n} ${plural(n, "обращение", "обращения", "обращений")}: ${e.codes.join(", ")}`,
+    `«${clean(e.title, 120)}» — ${n} ${plural(n, "обращение", "обращения", "обращений")}: ${list}`,
     clean(e.text, 400),
-    `${e.owner ? `Владелец темы: ${e.owner} · ` : ""}решение: ${e.by} · уведомлено сотрудников: ${e.notified}`,
+    `${e.owner ? `Владелец темы: ${nm(e.owner)} · ` : ""}решение: ${nm(e.by)} · уведомлено сотрудников: ${e.notified}`,
   ];
   if (publicUrl && e.codes[0]) lines.push(`[URL=${publicUrl}/issues/${e.codes[0]}]Открыть в PULSE[/URL]`);
   return lines.join("\n");
@@ -138,7 +154,7 @@ function formatDigest(e: Extract<BitrixEvent, { kind: "digest" }>, publicUrl: st
       lines.push(`→ ${clean(p.recommendation, 220)}`);
     });
   }
-  lines.push("", `Быстрых улучшений: ${e.quickWins} · рисков: ${e.risks} · отправил: ${e.by}`);
+  lines.push("", `Быстрых улучшений: ${e.quickWins} · рисков: ${e.risks} · отправил: ${nm(e.by)}`);
   if (publicUrl) lines.push(`[URL=${publicUrl}/analytics]Открыть аналитику в PULSE[/URL]`);
   return lines.join("\n");
 }
@@ -151,9 +167,11 @@ export function shareableProblems(
   problems: { title: string; issueCodes: string[]; impact: "high" | "medium" | "low"; recommendation: string }[],
   privateCodes: Set<string>,
 ) {
+  // Заголовок и рекомендацию проблемы пишет модель по текстам всех её обращений: если среди них есть
+  // конфиденциальное, пересказ может его раскрыть — такая проблема в общий чат не уходит целиком.
   return problems
-    .map((p) => ({ title: p.title, codes: p.issueCodes.filter((c) => !privateCodes.has(c)), impact: p.impact, recommendation: p.recommendation }))
-    .filter((p) => p.codes.length > 0);
+    .filter((p) => p.issueCodes.length > 0 && !p.issueCodes.some((c) => privateCodes.has(c)))
+    .map((p) => ({ title: p.title, codes: p.issueCodes, impact: p.impact, recommendation: p.recommendation }));
 }
 
 // ───────── отправка ─────────
@@ -201,8 +219,23 @@ export async function postBitrixMessage(cfg: { webhook: string; dialogId: string
 
 // ───────── фоновая очередь и статус ─────────
 
-const status = { sent: 0, failed: 0, lastSuccessAt: null as string | null, lastError: null as { at: string; reason: string } | null };
+const status = { sent: 0, failed: 0, dropped: 0, lastSuccessAt: null as string | null, lastError: null as { at: string; reason: string } | null };
 let queue: Promise<unknown> = Promise.resolve();
+// Ограничение очереди: всплеск событий не копится в памяти и не задерживает отправку по кнопке
+const MAX_PENDING = 50;
+let pending = 0;
+
+/**
+ * На serverless-хостинге процесс может быть остановлен сразу после ответа: after() продлевает
+ * его жизнь до завершения отправки. Вне запроса (тесты, скрипты) просто запускаем задачу.
+ */
+function keepAlive(task: Promise<unknown>) {
+  try {
+    after(() => task);
+  } catch {
+    /* вне контекста запроса */
+  }
+}
 
 async function deliver(message: string): Promise<SendResult> {
   const cfg = bitrixConfig();
@@ -228,8 +261,18 @@ async function deliver(message: string): Promise<SendResult> {
 export function notifyBitrix(e: BitrixEvent) {
   const cfg = bitrixConfig();
   if (!cfg.enabled) return;
+  if (pending >= MAX_PENDING) {
+    status.dropped++;
+    status.lastError = { at: new Date().toISOString(), reason: "Слишком много событий подряд — часть уведомлений пропущена" };
+    return;
+  }
   const message = formatBitrixMessage(e, cfg.publicUrl);
-  queue = queue.then(() => deliver(message)).catch(() => undefined);
+  pending++;
+  queue = queue
+    .then(() => deliver(message))
+    .catch(() => undefined)
+    .finally(() => pending--);
+  keepAlive(queue);
 }
 
 /** Отправка с ожиданием результата: тестовое сообщение из настроек, сводка по кнопке */
@@ -238,6 +281,7 @@ export function sendBitrixNow(e: BitrixEvent): Promise<SendResult> {
   const message = formatBitrixMessage(e, cfg.publicUrl);
   const run = queue.then(() => deliver(message));
   queue = run.catch(() => undefined);
+  keepAlive(queue);
   return run;
 }
 
@@ -254,6 +298,8 @@ export function bitrixStatus() {
 export function __resetBitrixForTests() {
   status.sent = 0;
   status.failed = 0;
+  status.dropped = 0;
+  pending = 0;
   status.lastSuccessAt = null;
   status.lastError = null;
   queue = Promise.resolve();

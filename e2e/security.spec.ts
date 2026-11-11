@@ -112,3 +112,47 @@ test("секреты не попадают в клиентский код и о�
   expect(headers["x-content-type-options"]).toBe("nosniff");
   expect(headers["x-powered-by"]).toBeUndefined();
 });
+
+test("регрессия: подмена X-Real-IP не обходит лимит входа", async ({ page }) => {
+  const email = "s.lebedev@pulse.demo";
+  let last = 0;
+  for (let i = 0; i < 9; i++) {
+    const r = await page.request.post("/api/auth/login", { data: { email, password: `wrong-${i}` }, headers: { "x-real-ip": `10.1.0.${i}` } });
+    last = r.status();
+  }
+  expect(last).toBe(429);
+});
+
+test("регрессия: Vercel Cron вызывает эскалации GET с Bearer-секретом", async ({ page }) => {
+  expect((await page.request.get("/api/cron/sla")).status()).toBe(403);
+  expect((await page.request.get("/api/cron/sla", { headers: { authorization: "Bearer wrong" } })).status()).toBe(403);
+  const ok = await page.request.get("/api/cron/sla", { headers: { authorization: "Bearer e2e-cron-secret-0123456789" } });
+  expect(ok.status()).toBe(200);
+});
+
+test("регрессия: экраны руководителя закрыты для других ролей на сервере", async ({ page }) => {
+  await loginAs(page, ACC.employee);
+  await page.goto("/pulse");
+  await expect(page).toHaveURL(/\/my$/);
+  await page.goto("/analytics");
+  await expect(page).toHaveURL(/\/my$/);
+  await loginAs(page, ACC.handler);
+  await page.goto("/pulse");
+  await expect(page).toHaveURL(/\/queue\?view=queue$/);
+  await page.goto("/analytics");
+  await expect(page.getByRole("heading", { name: "Аналитика" })).toBeVisible();
+});
+
+test("регрессия: прямое открытие очереди и аналитики — без ошибок гидратации, данные загружаются", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  page.on("pageerror", (e) => errors.push(e.message));
+  await loginAs(page, ACC.manager);
+  // сначала оболочка с кэшем me/meta, затем полная загрузка страниц внутри Suspense
+  await page.goto("/pulse");
+  await page.goto("/queue?view=open&sort=bogus&status=NEW");
+  await expect(page.locator("[data-row]").first()).toBeVisible();
+  await page.goto("/analytics");
+  await expect(page.getByText("Реакция в срок").first()).toBeVisible();
+  expect(errors.filter((e) => /hydrat|Minified React error #4(18|19|23|25)/i.test(e))).toEqual([]);
+});

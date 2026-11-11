@@ -2,6 +2,9 @@ import { route } from "@/lib/api";
 import { generateDigest, latestDigest } from "@/lib/ai/features";
 import { bitrixConfig } from "@/lib/integrations/bitrix24";
 
+// сводка — один долгий вызов (до 100 с без повтора) + запись результата
+export const maxDuration = 120;
+
 const serialize = (d: Awaited<ReturnType<typeof latestDigest>>) =>
   d ? { id: d.id, source: d.source, model: d.model, content: d.content, issuesCount: d.issuesCount, createdAt: d.createdAt.toISOString() } : null;
 

@@ -218,7 +218,7 @@ ${candidates.length ? candidates.map((c) => `<candidate code="${c.issue.code}" s
 
   // Рекомендация маршрутизации — детерминированно по правилам для предложенной категории
   const route = result.data.categoryId
-    ? await resolveRoute({ categoryId: result.data.categoryId, type: result.data.type, authorDepartmentId: user.departmentId })
+    ? await resolveRoute({ categoryId: result.data.categoryId, type: result.data.type, authorId: user.id, authorDepartmentId: user.departmentId })
     : null;
   return { ...result, route: route ? { assigneeName: route.assigneeName, via: route.via, note: route.note } : null };
 }
@@ -247,11 +247,15 @@ export async function triageIssue(user: CurrentUser, code: string, opts: { gener
   if (!issue) return null;
   const hash = hashInput(issue.title, issue.description, issue.proposedSolution, issue.status, issue.categoryId, issue.comments.length);
   if (!opts.generate) {
-    return issue.aiTriage && issue.aiTriageHash === hash ? (issue.aiTriage as unknown as AiResult<TriageResult>) : issue.aiTriage ? { ...(issue.aiTriage as unknown as AiResult<TriageResult>), stale: true } : null;
+    if (!issue.aiTriage) return null;
+    const cached = await withoutPrivateRelated(issue.aiTriage as unknown as AiResult<TriageResult>);
+    return issue.aiTriageHash === hash ? cached : { ...cached, stale: true };
   }
 
   const categories = await activeCategories();
-  const corpus = await loadCorpus();
+  // Разбор хранится в обращении и виден всем его обработчикам: похожие — только из
+  // неконфиденциальных обращений (их заголовки и так видны сотрудникам в «похожих»)
+  const corpus = await loadCorpus({ isPrivate: false });
   const related = localSimilar(`${issue.title}\n${issue.description}`, corpus, issue.id, 3).map((r) => ({
     code: r.issue.code,
     title: r.issue.title,
@@ -353,6 +357,16 @@ ${thread ? `Переписка:\n${thread}` : ""}
   return result;
 }
 
+/** Разборы, сохранённые ранними версиями, могли ссылаться на конфиденциальные обращения */
+async function withoutPrivateRelated(r: AiResult<TriageResult>): Promise<AiResult<TriageResult>> {
+  const related = r.data?.related ?? [];
+  if (!related.length) return r;
+  const priv = new Set(
+    (await db.issue.findMany({ where: { code: { in: related.map((x) => x.code) }, isPrivate: true }, select: { code: true } })).map((x) => x.code),
+  );
+  return priv.size ? { ...r, data: { ...r.data, related: related.filter((x) => !priv.has(x.code)) } } : r;
+}
+
 // ───────────────────────── сводка для руководства ─────────────────────────
 
 export async function latestDigest() {
@@ -364,8 +378,12 @@ const DIGEST_COOLDOWN_MS = 5 * 60_000;
 export async function generateDigest(user: CurrentUser) {
   if (!isStaff(user.role)) return null;
   const last = await latestDigest();
-  const corpus = await loadCorpus();
   const now = new Date();
+  // Открытые обращения и всё, что подано за полгода: сводка — о текущей картине, а промпт
+  // не растёт бесконечно вместе с историей (лимиты контекста и бюджета)
+  const corpus = (
+    await loadCorpus({ OR: [{ status: { in: OPEN_STATUSES } }, { createdAt: { gte: new Date(now.getTime() - 180 * 24 * 3600_000) } }] })
+  ).slice(-400);
   const fingerprint = hashInput(corpus.map((c) => `${c.code}:${c.status}:${c.supportersCount}`));
 
   // Защита от лишних запросов: та же картина данных + недавняя сводка = отдаём существующую
@@ -375,7 +393,10 @@ export async function generateDigest(user: CurrentUser) {
 
   const open = corpus.filter((c) => OPEN_STATUSES.includes(c.status));
   const overdue = await db.issue.count({
-    where: { status: { in: OPEN_STATUSES }, OR: [{ dueAt: { lt: now } }, { firstResponseAt: null, firstResponseDueAt: { lt: now } }] },
+    where: {
+      status: { in: OPEN_STATUSES },
+      OR: [{ dueAt: { lt: now }, status: { not: "NEEDS_INFO" } }, { firstResponseAt: null, firstResponseDueAt: { lt: now } }],
+    },
   });
   const stats = { total: corpus.length, open: open.length, overdue, implemented: corpus.filter((c) => c.status === "IMPLEMENTED").length };
   const themes = localThemes(corpus);
@@ -406,7 +427,7 @@ export async function generateDigest(user: CurrentUser) {
 ${corpus
   .map(
     (c) =>
-      `<issue code="${c.code}" type="${TYPE_LABEL[c.type]}" category="${c.categoryName}" status="${STATUS_LABEL[c.status]}" priority="${PRIORITY_LABEL[c.priority]}"${c.departmentName ? ` department="${c.departmentName}"` : ""} supporters="${c.supportersCount}">${redactPII(c.title)}. ${redactPII(clip(c.description, 350))}${c.decision ? ` Решение: ${redactPII(clip(c.decision, 200))}` : ""}</issue>`,
+      `<issue code="${c.code}"${c.isPrivate ? ` private="true"` : ""} type="${TYPE_LABEL[c.type]}" category="${c.categoryName}" status="${STATUS_LABEL[c.status]}" priority="${PRIORITY_LABEL[c.priority]}"${c.departmentName ? ` department="${c.departmentName}"` : ""} supporters="${c.supportersCount}">${redactPII(c.title)}. ${redactPII(clip(c.description, 350))}${c.decision ? ` Решение: ${redactPII(clip(c.decision, 200))}` : ""}</issue>`,
   )
   .join("\n")}
 
@@ -417,6 +438,7 @@ ${corpus
 - quickWins — до 3 улучшений, которые можно внедрить быстро;
 - risks — до 3 рисков (например, просрочки, повторные обращения);
 - positiveSignals — до 3 позитивных сигналов (реализованные улучшения, отзывы).
+Обращения с private="true" автор попросил не показывать коллегам: учитывай их в выводах, но не пересказывай их содержание в headline и в названиях проблем — формулируй обобщённо.
 Опирайся только на данные выше.`;
 
   const result = await runAi<DigestContent>({
@@ -438,7 +460,8 @@ ${corpus
           output_config: { effort: "medium", format: betaZodOutputFormat(Schema) },
           messages: [{ role: "user", content: prompt }],
         },
-        { timeout: 90_000 },
+        // без автоматического повтора: два долгих вызова не уложились бы в лимит времени функции
+        { timeout: 100_000, maxRetries: 0 },
       );
       if (res.stop_reason === "refusal") throw new AiRefusal();
       const out = res.parsed_output;

@@ -32,9 +32,19 @@ export function sameOrigin(req: NextRequest) {
   if (req.headers.get("sec-fetch-site") === "cross-site") return false;
   const origin = req.headers.get("origin");
   if (!origin) return true; // не-браузерные клиенты (curl, тесты) — cookie всё равно sameSite=lax
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  let originHost: string;
   try {
-    return new URL(origin).host === host;
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (originHost === host) return true;
+  // за обратным прокси без проброса Host (nginx proxy_pass по умолчанию) сверяем с публичным адресом
+  const pub = process.env.PULSE_PUBLIC_URL?.trim();
+  if (!pub) return false;
+  try {
+    return new URL(pub).host === originHost;
   } catch {
     return false;
   }
@@ -45,11 +55,14 @@ export function sameOrigin(req: NextRequest) {
  * (TRUST_PROXY=true), иначе заголовок может подделать сам клиент.
  */
 export function clientIp(req: NextRequest) {
-  if (process.env.TRUST_PROXY === "true") {
+  // На Vercel заголовки выставляет платформа; в остальных случаях им можно верить только за своим прокси
+  if (process.env.TRUST_PROXY === "true" || process.env.VERCEL === "1") {
     const xff = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     if (xff) return xff;
+    const real = req.headers.get("x-real-ip")?.trim();
+    if (real) return real;
   }
-  return req.headers.get("x-real-ip") ?? "direct";
+  return "direct";
 }
 
 export function toErrorResponse(err: unknown) {
@@ -99,8 +112,14 @@ export function route<Ctx = unknown>(handler: Handler<Ctx>, opts: { roles?: Role
   };
 }
 
+/** JSON-тела API небольшие: всё, что больше, отклоняем до чтения в память */
+const MAX_JSON_BYTES = 256 * 1024;
+
 export async function readJson(req: NextRequest) {
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > MAX_JSON_BYTES) throw new ApiError(413, "Слишком большой запрос", "too_large");
   const text = await req.text();
+  if (text.length > MAX_JSON_BYTES) throw new ApiError(413, "Слишком большой запрос", "too_large");
   if (!text) return {};
   return JSON.parse(text);
 }

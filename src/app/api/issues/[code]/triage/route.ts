@@ -5,6 +5,8 @@ import { issueAccess } from "@/lib/permissions";
 import { triageIssue } from "@/lib/ai/features";
 import type { CurrentUser } from "@/lib/auth/current-user";
 
+export const maxDuration = 60;
+
 type Ctx = RouteContext<"/api/issues/[code]/triage">;
 
 async function check(user: CurrentUser, code: string) {

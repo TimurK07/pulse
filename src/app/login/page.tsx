@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { homeFor } from "@/lib/nav";
 import { safeNext } from "@/lib/safe-redirect";
 import { PulseWordmark } from "@/components/shell/logo";
-import { DEMO_ACCOUNTS, EXTRA_DEMO } from "@/lib/demo-accounts";
+import { DEMO_ACCOUNTS, DEMO_PASSWORD, EXTRA_DEMO } from "@/lib/demo-accounts";
 
 export const metadata: Metadata = { title: "Вход" };
 
@@ -52,7 +52,12 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         <div className="w-full max-w-[400px]">
           <h2 className="text-title-xl font-semibold">Вход в PULSE</h2>
           <p className="mt-1 text-body text-ink-2">Используйте корпоративную почту.</p>
-          <LoginForm next={next} accounts={demo ? DEMO_ACCOUNTS.map((a) => ({ ...a })) : []} extra={demo ? EXTRA_DEMO.map((a) => ({ ...a })) : []} />
+          <LoginForm
+            next={next}
+            demoPassword={demo ? DEMO_PASSWORD : null}
+            accounts={demo ? DEMO_ACCOUNTS.map((a) => ({ ...a })) : []}
+            extra={demo ? EXTRA_DEMO.map((a) => ({ ...a })) : []}
+          />
         </div>
       </section>
     </div>

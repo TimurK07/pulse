@@ -7,6 +7,7 @@ import { OPEN_STATUSES, RESOLVED_STATUSES, STATUS_LABEL, STATUS_REQUIRES_TEXT, a
 import { isManagerial } from "@/lib/permissions";
 import { notify } from "./notifications";
 import { bitrixConfig, notifyBitrix } from "@/lib/integrations/bitrix24";
+import { resumeAfterPause } from "@/lib/sla";
 
 /**
  * Системное решение по теме: руководитель одним действием берёт в работу,
@@ -68,6 +69,8 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
       assigneeId: true,
       isPrivate: true,
       firstResponseAt: true,
+      dueAt: true,
+      pausedAt: true,
       themeDecisionId: true,
       themeDecision: { select: { title: true, status: true } },
       assignee: { select: { name: true } },
@@ -123,11 +126,23 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
     const d = await tx.themeDecision.create({
       data: { title, text, status: input.status, ownerId: owner?.id ?? null, decidedById: user.id, notifiedCount: recipients.size, createdAt: now },
     });
-    const note = `Системное решение «${title}» по ${codes.length} ${pluralRu(codes.length, "обращению", "обращениям", "обращениям")}: ${codes.join(", ")}`;
+    // заметку видят авторы всех обращений темы: конфиденциальные обращения не называем даже кодом
+    const shown = plans.filter((p) => !p.issue.isPrivate).map((p) => p.issue.code).sort();
+    const hidden = codes.length - shown.length;
+    const note = `Системное решение «${title}» по ${codes.length} ${pluralRu(codes.length, "обращению", "обращениям", "обращениям")}${shown.length ? `: ${shown.join(", ")}` : ""}${hidden && shown.length ? ` и ещё ${hidden} ${pluralRu(hidden, "конфиденциальному", "конфиденциальным", "конфиденциальным")}` : ""}`;
     for (const { issue, path } of plans) {
       const data: Prisma.IssueUncheckedUpdateManyInput = { themeDecisionId: d.id, status: input.status, updatedAt: now };
       if (!issue.firstResponseAt) data.firstResponseAt = now;
       if (owner) data.assigneeId = owner.id;
+      // выход из паузы (ждали ответа автора): срок решения продлевается на время ожидания
+      if (issue.status === "NEEDS_INFO") {
+        data.pausedAt = null;
+        if (!resolved) {
+          const due = resumeAfterPause(issue.dueAt, issue.pausedAt, now);
+          data.dueAt = due;
+          if (due > now) data.escalatedAt = null;
+        }
+      }
       if (resolved) {
         data.decision = text;
         data.decisionAt = now;
@@ -153,7 +168,7 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
       if (!resolved) await tx.comment.create({ data: { issueId: issue.id, authorId: user.id, kind: "COMMENT", body: `${note}.\n\n${text}`, createdAt: now } });
     }
     return d;
-  });
+  }, { timeout: 30_000, maxWait: 10_000 });
 
   const label = STATUS_LABEL[input.status].toLowerCase();
   if (recipients.size) {
@@ -175,12 +190,14 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
     );
   }
 
+  // рабочий чат видят коллеги: конфиденциальные обращения не перечисляем
   notifyBitrix({
     kind: "theme",
     title,
     status: input.status,
     text,
-    codes: plans.map((p) => p.issue.code).sort(),
+    codes: plans.filter((p) => !p.issue.isPrivate).map((p) => p.issue.code).sort(),
+    hidden: plans.filter((p) => p.issue.isPrivate).length,
     owner: owner?.name ?? null,
     by: user.name,
     notified: recipients.size,
