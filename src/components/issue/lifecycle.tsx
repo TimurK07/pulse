@@ -86,7 +86,7 @@ export function NextStep({ issue: i, onPick }: { issue: IssueDetail; onPick: (s:
       <h2 className="text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Следующий шаг</h2>
       <p className="mt-1 text-ui text-ink">{CONTEXT[i.status]}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <SlaTimer status={i.status} createdAt={i.createdAt} firstResponseAt={i.firstResponseAt} firstResponseDueAt={i.firstResponseDueAt} dueAt={i.dueAt} variant="panel" />
+        <SlaTimer status={i.status} createdAt={i.createdAt} firstResponseAt={i.firstResponseAt} firstResponseDueAt={i.firstResponseDueAt} dueAt={i.dueAt} pausedAt={i.pausedAt} variant="panel" />
         {urgency && <span className={cn("text-meta", urgency.startsWith("Срок") ? "text-danger" : "text-ink-3")}>{urgency}</span>}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">

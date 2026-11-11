@@ -88,10 +88,15 @@ function useAdminMutation<T>(fn: (v: T) => Promise<unknown>, ok = "Сохран�
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["admin"] });
       qc.invalidateQueries({ queryKey: ["meta"] });
-      toast.success(ok);
+      // смена роли/деактивация перемаршрутизирует открытые обращения — обновляем всё, что их показывает
+      const rerouted = (res as { rerouted?: number } | undefined)?.rerouted ?? 0;
+      if (rerouted) {
+        for (const key of ["issues", "issue", "me", "analytics"]) qc.invalidateQueries({ queryKey: [key] });
+      }
+      toast.success(rerouted ? `${ok}. Передано другим ответственным: ${rerouted}` : ok);
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -193,6 +198,7 @@ function Routing({ data }: { data: Overview }) {
                   <td className="px-3 py-2.5">
                     <select
                       aria-label={`Режим для ${c.name}`}
+                      disabled={saveRule.isPending /* следующее изменение строки — после сохранения предыдущего */}
                       className={cellSelect}
                       value={rule?.mode ?? "FIXED"}
                       onChange={(e) =>
@@ -210,6 +216,7 @@ function Routing({ data }: { data: Overview }) {
                       <>
                         <select
                           aria-label={`Основной ответственный для ${c.name}`}
+                      disabled={saveRule.isPending /* следующее изменение строки — после сохранения предыдущего */}
                           className={cn(cellSelect, primaryAway && "border-warn")}
                           value={rule?.primary?.id ?? ""}
                           onChange={(e) => saveRule.mutate({ categoryId: c.id, issueType: null, mode: "FIXED", primaryId: e.target.value, backupId: rule?.backup?.id ?? null })}
@@ -224,6 +231,7 @@ function Routing({ data }: { data: Overview }) {
                   <td className="px-3 py-2.5">
                     <select
                       aria-label={`Резервный ответственный для ${c.name}`}
+                      disabled={saveRule.isPending /* следующее изменение строки — после сохранения предыдущего */}
                       className={cellSelect}
                       value={rule?.backup?.id ?? ""}
                       onChange={(e) =>

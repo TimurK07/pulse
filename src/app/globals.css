@@ -232,6 +232,8 @@
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* длинные ссылки и адреса в текстах обращений переносятся, а не растягивают страницу */
+    overflow-wrap: break-word;
   }
   ::selection {
     background: var(--accent-soft);

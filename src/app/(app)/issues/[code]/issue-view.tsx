@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Check, Download, EyeOff, Layers, Link2, Lock, Paperclip, ThumbsUp, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { api, errorMessage, ApiClientError } from "@/lib/client/api";
+import { api, errorMessage, ApiClientError, uploadFiles } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
 import {
   ALLOWED_MIME,
@@ -45,6 +45,9 @@ export function IssueView({ code }: { code: string }) {
     qc.invalidateQueries({ queryKey: ["issues"] });
     qc.invalidateQueries({ queryKey: ["me"] });
     qc.invalidateQueries({ queryKey: ["triage", code] });
+    // счётчики Пульса, аналитика и доска результатов зависят от статусов и ответственных
+    qc.invalidateQueries({ queryKey: ["analytics"] });
+    qc.invalidateQueries({ queryKey: ["results"] });
   };
 
   const patch = useMutation({
@@ -59,6 +62,8 @@ export function IssueView({ code }: { code: string }) {
     onError: (e, body) => {
       if (body.status) setTransitionError(errorMessage(e));
       else toast.error(errorMessage(e));
+      // конфликт или устаревшие данные: показываем актуальное состояние обращения
+      if (e instanceof ApiClientError && (e.status === 409 || e.status === 400)) qc.invalidateQueries({ queryKey: ["issue", code] });
     },
   });
 
@@ -80,14 +85,15 @@ export function IssueView({ code }: { code: string }) {
       </div>
     );
   }
-  if (q.isError) {
+  // ошибка фонового обновления не должна стирать открытую карточку и набранный комментарий
+  if (q.isError && !q.data) {
     const status = (q.error as ApiClientError).status;
     if (status === 404)
       return (
         <EmptyState
           title="Обращение не найдено"
           text="Возможно, у вас нет к нему доступа или код указан неверно."
-          action={<Button onClick={() => router.back()}>Назад</Button>}
+          action={<Button onClick={() => (window.history.length > 1 ? router.back() : router.push("/"))}>Назад</Button>}
         />
       );
     return <ErrorState message={errorMessage(q.error)} onRetry={() => q.refetch()} />;
@@ -95,6 +101,8 @@ export function IssueView({ code }: { code: string }) {
   const i = q.data!;
   const v = i.viewer;
   const staff = v.canProcess;
+  // закрытое обращение не редактируется (сервер требует сначала переоткрыть)
+  const editable = staff && isOpen(i.status);
 
   const applyCategory = (name: string) => {
     const cat = meta.data?.categories.find((c) => c.name === name);
@@ -236,6 +244,7 @@ export function IssueView({ code }: { code: string }) {
                       return;
                     }
                     setPrefill(question);
+                    setTransitionError(null);
                     setTarget("NEEDS_INFO");
                   }}
                   onApplyCategory={applyCategory}
@@ -274,7 +283,7 @@ export function IssueView({ code }: { code: string }) {
                   <StatusPill status={i.status} />
                 </Prop>
                 <Prop label="Приоритет">
-                  {staff ? (
+                  {editable ? (
                     <InlineSelect
                       value={i.priority}
                       onChange={(p) => patch.mutate({ priority: p })}
@@ -289,14 +298,14 @@ export function IssueView({ code }: { code: string }) {
                   )}
                 </Prop>
                 <Prop label="Категория">
-                  {staff && meta.data ? (
+                  {editable && meta.data ? (
                     <InlineSelect value={i.category.id} onChange={(c) => patch.mutate({ categoryId: c })} options={meta.data.categories.map((c) => [c.id, c.name])} label="Категория" />
                   ) : (
                     <span className="text-ink">{i.category.name}</span>
                   )}
                 </Prop>
                 <Prop label="Ответственный">
-                  {v.canReassign && meta.data ? (
+                  {v.canReassign && editable && meta.data ? (
                     <InlineSelect
                       value={i.assignee?.id ?? ""}
                       onChange={(id) => patch.mutate({ assigneeId: id || null })}
@@ -313,7 +322,7 @@ export function IssueView({ code }: { code: string }) {
                       </span>
                     </span>
                   )}
-                  {v.canTakeOver && (
+                  {v.canTakeOver && editable && (
                     <Button size="sm" variant="quiet" className="mt-1" onClick={() => patch.mutate({ assigneeId: viewer.id })}>
                       Взять себе
                     </Button>
@@ -442,7 +451,7 @@ function Deadlines({ issue: i, canEdit, onChangeDue }: { issue: IssueDetail; can
           {i.resolvedAt ? (
             <span className={cn("text-meta", new Date(i.resolvedAt) > new Date(i.dueAt) ? "text-warn" : "text-ok")}>{fmtDateTime(i.resolvedAt)}</span>
           ) : (
-            <SlaTimer status={i.status} createdAt={i.createdAt} firstResponseAt={i.createdAt} firstResponseDueAt={i.firstResponseDueAt} dueAt={i.dueAt} variant="panel" />
+            <SlaTimer status={i.status} createdAt={i.createdAt} firstResponseAt={i.createdAt} firstResponseDueAt={i.firstResponseDueAt} dueAt={i.dueAt} pausedAt={i.pausedAt} variant="panel" />
           )}
         </div>
         {open && (
@@ -453,15 +462,17 @@ function Deadlines({ issue: i, canEdit, onChangeDue }: { issue: IssueDetail; can
         <div className="mt-1 flex items-center justify-between gap-2 text-micro text-ink-3">
           <span>срок {fmtDate(i.dueAt)}</span>
           {canEdit && open && (
-            <label className="relative cursor-pointer text-ink-2 hover:text-ink">
+            <label className="relative cursor-pointer rounded-[3px] text-ink-2 hover:text-ink focus-within:text-ink focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus">
               изменить
               <input
                 type="date"
                 aria-label="Новый срок решения"
                 className="absolute inset-0 cursor-pointer opacity-0"
-                min={new Date().toISOString().slice(0, 10)}
+                min={localToday()}
                 onChange={(e) => {
-                  if (e.target.value) onChangeDue(new Date(`${e.target.value}T18:00:00`).toISOString());
+                  // при вводе с клавиатуры поле проходит через 0002…2026 — сохраняем только реальную дату не раньше сегодня
+                  const v = e.target.value;
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v >= localToday()) onChangeDue(new Date(`${v}T18:00:00`).toISOString());
                 }}
               />
             </label>
@@ -475,16 +486,25 @@ function Deadlines({ issue: i, canEdit, onChangeDue }: { issue: IssueDetail; can
 function Attachments({ issue: i, onUploaded }: { issue: IssueDetail; onUploaded: () => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const upload = useMutation({
-    mutationFn: async (files: FileList) => {
-      const fd = new FormData();
-      for (const f of Array.from(files)) fd.append("files", f);
-      return api.post(`/api/issues/${i.code}/attachments`, fd);
+    mutationFn: async (list: FileList) => {
+      const files = Array.from(list);
+      const free = LIMITS.attachmentsPerIssue - i.attachments.length;
+      if (files.length > free) throw new Error(`Можно добавить ещё ${free} из ${LIMITS.attachmentsPerIssue} файлов`);
+      const big = files.find((f) => f.size > LIMITS.attachmentMaxBytes);
+      if (big) throw new Error(`«${big.name}»: файл больше 10 МБ`);
+      const r = await uploadFiles(i.code, files);
+      if (!r.uploaded) throw new Error(r.failed[0]?.message ?? "Файлы не загружены");
+      return r;
     },
-    onSuccess: () => {
+    onSuccess: (r) => {
       onUploaded();
-      toast.success("Файл добавлен");
+      if (r.failed.length) toast.error(`Не загружено: ${r.failed.map((f) => `«${f.name}» — ${f.message}`).join("; ")}`);
+      else toast.success(r.uploaded > 1 ? "Файлы добавлены" : "Файл добавлен");
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => {
+      onUploaded();
+      toast.error(errorMessage(e));
+    },
     onSettled: () => {
       if (ref.current) ref.current.value = "";
     },
@@ -504,7 +524,8 @@ function Attachments({ issue: i, onUploaded }: { issue: IssueDetail; onUploaded:
               id="attach"
               aria-label="Прикрепить файлы к обращению"
               accept={Object.keys(ALLOWED_MIME).join(",")}
-              onChange={(e) => e.target.files?.length && upload.mutate(e.target.files)}
+              disabled={upload.isPending}
+              onChange={(e) => e.target.files?.length && !upload.isPending && upload.mutate(e.target.files)}
             />
             <Button size="sm" variant="ghost" onClick={() => ref.current?.click()} loading={upload.isPending}>
               <Upload className="size-3.5" /> Прикрепить
@@ -543,7 +564,7 @@ function Composer({ issue: i, onSent }: { issue: IssueDetail; onSent: () => void
     onSuccess: (d) => {
       setBody("");
       onSent();
-      toast.success(d?.statusChanged ? "Ответ отправлен — обращение вернулось на рассмотрение" : mode === "INTERNAL" ? "Заметка сохранена" : "Комментарий отправлен");
+      toast.success(d?.statusChanged ? "Ответ отправлен — обращение вернулось в работу ответственного" : mode === "INTERNAL" ? "Заметка сохранена" : "Комментарий отправлен");
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -554,7 +575,7 @@ function Composer({ issue: i, onSent }: { issue: IssueDetail; onSent: () => void
       className={cn("mt-6 rounded-pop border bg-raised transition-colors-fast", mode === "INTERNAL" ? "border-line-strong bg-subtle" : "border-line-strong")}
       onSubmit={(e) => {
         e.preventDefault();
-        if (body.trim()) send.mutate();
+        if (body.trim() && !send.isPending) send.mutate();
       }}
     >
       <Textarea
@@ -562,7 +583,10 @@ function Composer({ issue: i, onSent }: { issue: IssueDetail; onSent: () => void
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && body.trim()) send.mutate();
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            if (body.trim() && !send.isPending) send.mutate();
+          }
         }}
         maxLength={LIMITS.commentMax}
         rows={3}
@@ -611,4 +635,10 @@ function Composer({ issue: i, onSent }: { issue: IssueDetail; onSent: () => void
       </div>
     </form>
   );
+}
+
+/** Сегодняшняя дата в часовом поясе пользователя (YYYY-MM-DD) */
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

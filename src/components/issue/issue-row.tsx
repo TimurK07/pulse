@@ -123,8 +123,9 @@ export function attachRowNav(container: HTMLElement | null) {
   const onKey = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (t.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = e.key.toLowerCase();
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    // физические клавиши J/K — работают и в русской раскладке
+    const k = e.code === "KeyJ" ? "j" : e.code === "KeyK" ? "k" : e.key.toLowerCase();
     if (k !== "j" && k !== "k" && k !== "arrowdown" && k !== "arrowup") return;
     const rows = Array.from(container.querySelectorAll<HTMLElement>("[data-row]"));
     if (!rows.length) return;

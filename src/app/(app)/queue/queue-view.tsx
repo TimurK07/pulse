@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, RowsSkeleton } from "@/components/ui/states";
 import { Kbd } from "@/components/ui/status";
 import { Button } from "@/components/ui/button";
 import { useViewer } from "@/components/shell/viewer";
+import { useHydrated } from "@/lib/client/hydrated";
 
 const VIEWS = [
   { key: "queue", label: "Мне назначено", hint: "Открытые обращения, где вы ответственный" },
@@ -48,7 +49,7 @@ function groupBySla(items: IssueListItem[]): Group[] {
   };
   for (const i of items) {
     const s = slaInfo(
-      { status: i.status, firstResponseAt: i.firstResponseAt ? new Date(i.firstResponseAt) : null, firstResponseDueAt: new Date(i.firstResponseDueAt), dueAt: new Date(i.dueAt) },
+      { status: i.status, firstResponseAt: i.firstResponseAt ? new Date(i.firstResponseAt) : null, firstResponseDueAt: new Date(i.firstResponseDueAt), dueAt: new Date(i.dueAt), pausedAt: i.pausedAt ? new Date(i.pausedAt) : null },
       now,
       new Date(i.createdAt),
     );
@@ -59,14 +60,17 @@ function groupBySla(items: IssueListItem[]): Group[] {
 
 export function QueueView() {
   const viewer = useViewer();
-  const router = useRouter();
+  const hydrated = useHydrated();
   const pathname = usePathname();
   const sp = useSearchParams();
   const meta = useMeta();
   const me = useMe();
   const listRef = useRef<HTMLDivElement>(null);
 
-  const view = sp.get("view") ?? "open";
+  // неизвестные значения из адреса не превращаются в 400 от API
+  const rawView = sp.get("view") ?? "open";
+  const view = VIEWS.some((v) => v.key === rawView) ? rawView : "open";
+  const rawSort = sp.get("sort") ?? "created_desc";
   const filters = {
     q: sp.get("q") ?? "",
     status: sp.get("status") ?? "",
@@ -75,28 +79,40 @@ export function QueueView() {
     departmentId: sp.get("departmentId") ?? "",
     priority: sp.get("priority") ?? "",
     assignee: sp.get("assignee") ?? "",
-    sort: sp.get("sort") ?? "created_desc",
+    sort: SORTS.some((x) => x.key === rawSort) ? rawSort : "created_desc",
   };
   const [q, setQ] = useState(filters.q);
   const [syncedQ, setSyncedQ] = useState(filters.q);
+  // последнее значение поиска, которое записало в адрес само поле (а не назад/вперёд)
+  const [pushedQ, setPushedQ] = useState(filters.q);
   if (syncedQ !== filters.q) {
-    // строка поиска в URL изменилась извне (назад/вперёд) — синхронизируем поле
     setSyncedQ(filters.q);
-    setQ(filters.q);
+    // строка поиска в URL изменилась извне (назад/вперёд) — синхронизируем поле,
+    // но не затираем то, что пользователь успел допечатать после нашей же записи
+    if (filters.q !== pushedQ) {
+      setPushedQ(filters.q);
+      setQ(filters.q);
+    }
   }
 
+  // Параметры берутся из текущего адреса в момент вызова: отложенный поиск не затирает
+  // фильтр, выбранный за эти 250 мс. replaceState обновляет useSearchParams без запроса к серверу.
   const setParam = (patch: Record<string, string | null>) => {
-    const next = new URLSearchParams(sp.toString());
+    const next = new URLSearchParams(window.location.search);
     for (const [k, v] of Object.entries(patch)) {
       if (v) next.set(k, v);
       else next.delete(k);
     }
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    const s = next.toString();
+    window.history.replaceState(null, "", s ? `${pathname}?${s}` : pathname);
   };
 
   useEffect(() => {
     const t = setTimeout(() => {
-      if (q !== filters.q) setParam({ q: q || null });
+      if (q !== filters.q) {
+        setPushedQ(q);
+        setParam({ q: q || null });
+      }
     }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,9 +125,11 @@ export function QueueView() {
         `/api/issues${qs({ view, ...filters, status: filters.status || undefined })}`,
       ),
     refetchInterval: 60_000,
+    enabled: viewer.role !== "EMPLOYEE",
   });
 
-  useEffect(() => attachRowNav(listRef.current), []);
+  // список появляется после гидратации — тогда и подключаем навигацию J/K
+  useEffect(() => attachRowNav(listRef.current), [hydrated]);
 
   const activeFilters = Object.entries(filters).filter(([k, v]) => v && k !== "sort" && k !== "q").length;
   const grouped = useMemo(() => {
@@ -126,6 +144,9 @@ export function QueueView() {
     overdue: me.data?.counters.overdue,
     no_response: me.data?.counters.noResponse,
   };
+
+  // данные из кэша (счётчики, справочники) — только после гидратации, иначе разметка расходится с серверной
+  if (!hydrated) return <RowsSkeleton />;
 
   if (viewer.role === "EMPLOYEE") {
     return <EmptyState title="Раздел для ответственных" text="Ваши обращения — в разделе «Мои обращения»." action={<Link href="/my" className="text-ui text-accent-text underline">Перейти</Link>} />;
@@ -171,6 +192,7 @@ export function QueueView() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            maxLength={200}
             placeholder="Код, заголовок, текст"
             className="h-8 w-full rounded-ctl border border-line bg-raised pl-8 pr-2 text-ui outline-none placeholder:text-ink-4 focus:border-focus"
           />

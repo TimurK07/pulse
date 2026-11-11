@@ -146,13 +146,14 @@ interface SlaProps {
   firstResponseAt: string | null;
   firstResponseDueAt: string;
   dueAt: string;
+  pausedAt?: string | null;
   variant?: "row" | "panel";
 }
 
-export function SlaTimer({ status, createdAt, firstResponseAt, firstResponseDueAt, dueAt, variant = "row" }: SlaProps) {
+export function SlaTimer({ status, createdAt, firstResponseAt, firstResponseDueAt, dueAt, pausedAt, variant = "row" }: SlaProps) {
   const now = useMinuteTick();
   const info = slaInfo(
-    { status, firstResponseAt: firstResponseAt ? new Date(firstResponseAt) : null, firstResponseDueAt: new Date(firstResponseDueAt), dueAt: new Date(dueAt) },
+    { status, firstResponseAt: firstResponseAt ? new Date(firstResponseAt) : null, firstResponseDueAt: new Date(firstResponseDueAt), dueAt: new Date(dueAt), pausedAt: pausedAt ? new Date(pausedAt) : null },
     new Date(now),
     new Date(createdAt),
   );
@@ -166,7 +167,7 @@ export function SlaTimer({ status, createdAt, firstResponseAt, firstResponseDueA
       <Tip content={`${tip}. Ждём ответа автора`}>
         <span className="inline-flex h-5 items-center gap-1.5 whitespace-nowrap text-meta text-ink-3">
           <span className="rounded-chip bg-subtle px-1 font-sans text-micro font-medium uppercase tracking-[0.06em] text-ink-2">пауза</span>
-          <span className="mono-num">{text}</span>
+          <span className="mono-num">{info.msLeft < 0 ? `−${formatDuration(info.msLeft)}` : text}</span>
         </span>
       </Tip>
     );

@@ -124,7 +124,15 @@ export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
         </div>
       )}
       {gen.isPending && <p className="px-5 pt-4 text-meta text-ink-3">Анализируем обращения… обычно до 30 секунд.</p>}
-      {!q.isLoading && !d && !gen.isPending && (
+      {q.isError && !d && (
+        <p className="px-5 py-5 text-meta text-danger">
+          Не удалось загрузить сводку.{" "}
+          <button type="button" className="underline" onClick={() => q.refetch()}>
+            Повторить
+          </button>
+        </p>
+      )}
+      {!q.isLoading && !q.isError && !d && !gen.isPending && (
         <p className="px-5 py-5 text-meta text-ink-3">
           {canGenerate ? "Сводка ещё не формировалась." : "Сводку формирует руководитель направления."}
         </p>

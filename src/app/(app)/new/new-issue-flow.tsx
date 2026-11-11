@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Check, CornerDownLeft, FileText, Paperclip, ThumbsUp, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { api, errorMessage, ApiClientError } from "@/lib/client/api";
+import { api, errorMessage, ApiClientError, uploadFiles } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
 import { ALLOWED_MIME, LIMITS, STATUS_LABEL, TYPE_HINT, TYPE_LABEL, type IssueStatus, type IssueType } from "@/lib/domain";
 import { fmtBytes, fmtDateTime } from "@/lib/client/format";
@@ -97,12 +97,11 @@ export function NewIssueFlow() {
         acknowledgedSimilar: ack.length ? ack : undefined,
       });
       if (files.length) {
-        const fd = new FormData();
-        files.forEach((f) => fd.append("files", f));
-        try {
-          await api.post(`/api/issues/${res.code}/attachments`, fd);
-        } catch (e) {
-          toast.error(`Обращение создано, но файлы не загружены: ${errorMessage(e)}. Добавьте их в карточке обращения.`);
+        const { failed } = await uploadFiles(res.code, files);
+        if (failed.length) {
+          toast.error(
+            `Обращение создано, но ${failed.length === files.length ? "файлы не загружены" : `не загружено: ${failed.map((f) => f.name).join(", ")}`} — ${failed[0].message}. Добавьте их в карточке обращения.`,
+          );
         }
       }
       return res;
@@ -112,6 +111,7 @@ export function NewIssueFlow() {
       setStep(3);
       qc.invalidateQueries({ queryKey: ["issues"] });
       qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
     },
     onError: (e) => {
       if (e instanceof ApiClientError && e.details) {
@@ -199,6 +199,10 @@ export function NewIssueFlow() {
               setCategoryId("");
               setCreated(null);
               setSupported(new Set());
+              // флаги конфиденциальности не переносятся незаметно на следующее обращение
+              setAnonymous(false);
+              setPrivate(false);
+              setErrors({});
               assist.reset();
             }}
             className="inline-flex h-9 items-center px-3 text-ui text-ink-2 hover:text-ink"

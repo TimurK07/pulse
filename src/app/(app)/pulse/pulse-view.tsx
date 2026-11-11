@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -36,7 +36,7 @@ export function PulseView() {
     const all: WithSla[] = items.map((i) => ({
       i,
       s: slaInfo(
-        { status: i.status, firstResponseAt: i.firstResponseAt ? new Date(i.firstResponseAt) : null, firstResponseDueAt: new Date(i.firstResponseDueAt), dueAt: new Date(i.dueAt) },
+        { status: i.status, firstResponseAt: i.firstResponseAt ? new Date(i.firstResponseAt) : null, firstResponseDueAt: new Date(i.firstResponseDueAt), dueAt: new Date(i.dueAt), pausedAt: i.pausedAt ? new Date(i.pausedAt) : null },
         now,
         new Date(i.createdAt),
       ),
@@ -52,12 +52,14 @@ export function PulseView() {
     };
   }, [issues.data]);
 
-  const rawDay = format(new Date(), "EEEE, d MMMM", { locale: ru });
-  const today = rawDay.charAt(0).toUpperCase() + rawDay.slice(1);
+  // дата — только на клиенте: часовой пояс сервера может отличаться от пользовательского
+  const today = useSyncExternalStore(noopSubscribe, todayLabel, () => "");
   const t = analytics.data?.totals;
   const loading = issues.isLoading;
+  // при ошибке загрузки нельзя показывать «просроченных нет» и нули
+  const unknown = loading || (issues.isError && !issues.data);
 
-  const headline = loading ? (
+  const headline = unknown ? (
     "Пульс"
   ) : g.overdue.length ? (
     <>
@@ -73,10 +75,10 @@ export function PulseView() {
       <PageHeader kind="statement" eyebrow={today} title={headline}>
         {/* Очереди действия: каждая ведёт в отфильтрованный список */}
         <nav aria-label="Очереди действия" className="mt-6 grid grid-cols-2 border-y border-line md:grid-cols-4">
-          <Counter href="/queue?view=overdue" icon={<CircleAlert className="size-4" />} label="Просрочено" value={g.overdue.length} tone="danger" loading={loading} />
-          <Counter href="/queue?view=no_response" icon={<Clock3 className="size-4" />} label="Без первой реакции" value={g.noReaction.length} tone="warn" loading={loading} />
-          <Counter href="/queue?view=needs_info" icon={<MessageCircleQuestion className="size-4" />} label="Ждут ответа автора" value={g.waiting.length} loading={loading} />
-          <Counter href="/queue?view=open&assignee=none" icon={<UserRoundX className="size-4" />} label="Без ответственного" value={g.unassigned.length} tone="danger" loading={loading} />
+          <Counter href="/queue?view=overdue" icon={<CircleAlert className="size-4" />} label="Просрочено" value={g.overdue.length} tone="danger" loading={unknown} />
+          <Counter href="/queue?view=no_response" icon={<Clock3 className="size-4" />} label="Без первой реакции" value={g.noReaction.length} tone="warn" loading={unknown} />
+          <Counter href="/queue?view=needs_info" icon={<MessageCircleQuestion className="size-4" />} label="Ждут ответа автора" value={g.waiting.length} loading={unknown} />
+          <Counter href="/queue?view=open&assignee=none" icon={<UserRoundX className="size-4" />} label="Без ответственного" value={g.unassigned.length} tone="danger" loading={unknown} />
         </nav>
         {t && (
           <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 pb-5 text-meta text-ink-3">
@@ -121,9 +123,9 @@ export function PulseView() {
 
         {/* Правая колонка: решения руководителя */}
         <aside className="min-w-0 space-y-8 border-t border-line px-4 py-6 sm:px-6">
-          <NextActions data={g} analytics={analytics.data} loading={loading || analytics.isLoading} />
-          <Bottlenecks analytics={analytics.data} />
-          <Themes analytics={analytics.data} />
+          <NextActions data={g} analytics={analytics.data} loading={loading || analytics.isLoading} failed={(issues.isError && !issues.data) || (analytics.isError && !analytics.data)} />
+          <Bottlenecks analytics={analytics.data} failed={analytics.isError && !analytics.data} onRetry={() => analytics.refetch()} />
+          <Themes analytics={analytics.data} failed={analytics.isError && !analytics.data} onRetry={() => analytics.refetch()} />
         </aside>
       </div>
     </div>
@@ -170,7 +172,17 @@ function Group({ title, items, more, tone, hint }: { title: string; items: Issue
   );
 }
 
-function NextActions({ data, analytics, loading }: { data: { overdue: WithSla[]; unassigned: IssueListItem[]; waiting: WithSla[] }; analytics?: Analytics; loading: boolean }) {
+function NextActions({
+  data,
+  analytics,
+  loading,
+  failed,
+}: {
+  data: { overdue: WithSla[]; unassigned: IssueListItem[]; waiting: WithSla[] };
+  analytics?: Analytics;
+  loading: boolean;
+  failed: boolean;
+}) {
   const acts = buildActions(data, analytics);
   return (
     <section aria-label="Что сделать сейчас">
@@ -204,6 +216,8 @@ function NextActions({ data, analytics, loading }: { data: { overdue: WithSla[];
             </li>
           ))}
         </ol>
+      ) : failed ? (
+        <p className="text-meta text-danger">Не удалось загрузить данные — список действий может быть неполным.</p>
       ) : (
         <p className="text-meta text-ink-3">Срочных решений не требуется.</p>
       )}
@@ -211,7 +225,7 @@ function NextActions({ data, analytics, loading }: { data: { overdue: WithSla[];
   );
 }
 
-function Bottlenecks({ analytics }: { analytics?: Analytics }) {
+function Bottlenecks({ analytics, failed, onRetry }: { analytics?: Analytics; failed: boolean; onRetry: () => void }) {
   const rows = (analytics?.byAssignee ?? []).filter((r) => r.open > 0).sort((a, b) => b.overdue - a.overdue || b.open - a.open).slice(0, 6);
   const peak = Math.max(1, ...rows.map((r) => r.open));
   return (
@@ -221,7 +235,9 @@ function Bottlenecks({ analytics }: { analytics?: Analytics }) {
           <UsersRound className="size-4 text-ink-3" /> Узкие места
         </span>
       </SectionTitle>
-      {!analytics ? (
+      {failed ? (
+        <LoadFailed onRetry={onRetry} />
+      ) : !analytics ? (
         <Skeleton className="h-32 w-full" />
       ) : (
         <ul className="space-y-3">
@@ -249,7 +265,7 @@ function Bottlenecks({ analytics }: { analytics?: Analytics }) {
   );
 }
 
-function Themes({ analytics }: { analytics?: Analytics }) {
+function Themes({ analytics, failed, onRetry }: { analytics?: Analytics; failed: boolean; onRetry: () => void }) {
   const themes = (analytics?.themes ?? []).slice(0, 5);
   const canDecide = isManagerRole(useViewer().role);
   const [theme, setTheme] = useState<ThemeRef | null>(null);
@@ -260,7 +276,9 @@ function Themes({ analytics }: { analytics?: Analytics }) {
           <Layers className="size-4 text-ink-3" /> Повторяющиеся проблемы
         </span>
       </SectionTitle>
-      {!analytics ? (
+      {failed ? (
+        <LoadFailed onRetry={onRetry} />
+      ) : !analytics ? (
         <Skeleton className="h-32 w-full" />
       ) : themes.length ? (
         <ol className="space-y-3">
@@ -294,4 +312,21 @@ function Themes({ analytics }: { analytics?: Analytics }) {
       <ThemeDecisionDialog theme={theme} onClose={() => setTheme(null)} />
     </section>
   );
+}
+
+function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="text-meta text-ink-3">
+      Не удалось загрузить.{" "}
+      <button type="button" onClick={onRetry} className="text-ink-2 underline hover:text-ink">
+        Повторить
+      </button>
+    </p>
+  );
+}
+
+const noopSubscribe = () => () => {};
+function todayLabel() {
+  const raw = format(new Date(), "EEEE, d MMMM", { locale: ru });
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }

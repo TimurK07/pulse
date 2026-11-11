@@ -103,11 +103,13 @@ export function AppShell({ user, children }: { user: Viewer; children: React.Rea
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const typing = target.closest("input, textarea, select, [contenteditable=true]");
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // в диалогах и меню «C» не должна уводить со страницы и терять набранный текст
+      const typing = target.closest("input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [role=listbox]");
+      // e.code — физическая клавиша: сочетания работают и в русской раскладке (К/С)
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.code === "KeyK") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
-      } else if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "c" && pathname !== "/new") {
+      } else if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.repeat && !e.isComposing && e.code === "KeyC" && pathname !== "/new") {
         e.preventDefault();
         router.push("/new");
       }
@@ -325,7 +327,11 @@ function Notifications({ unread }: { unread: number }) {
       qc.invalidateQueries({ queryKey: ["notifications"] });
     }
     setOpen(false);
-    if (n.code) router.push(`/issues/${n.code}`);
+    if (n.code) {
+      // уведомление о том же обращении, которое уже открыто, — показываем свежие данные
+      qc.invalidateQueries({ queryKey: ["issue", n.code] });
+      router.push(`/issues/${n.code}`);
+    }
   };
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>

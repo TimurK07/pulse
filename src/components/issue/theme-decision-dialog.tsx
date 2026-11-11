@@ -106,6 +106,8 @@ export function ThemeDecisionDialog({ theme, onClose }: { theme: ThemeRef | null
       qc.invalidateQueries({ queryKey: ["analytics"] });
       qc.invalidateQueries({ queryKey: ["issue"] });
       qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: ["results"] });
+      qc.invalidateQueries({ queryKey: ["triage"] });
     },
     onError: (e) => setError(errorMessage(e)),
   });
@@ -145,6 +147,13 @@ export function ThemeDecisionDialog({ theme, onClose }: { theme: ThemeRef | null
                   </legend>
                   {issues.isLoading ? (
                     <Skeleton className="h-24 w-full" />
+                  ) : issues.isError ? (
+                    <p className="text-meta text-danger">
+                      Не удалось загрузить обращения темы.{" "}
+                      <button type="button" className="underline" onClick={() => issues.refetch()}>
+                        Повторить
+                      </button>
+                    </p>
                   ) : (
                     <ul className="divide-y divide-line rounded-ctl border border-line">
                       {rows.map(({ code, issue }) => {
@@ -206,7 +215,7 @@ export function ThemeDecisionDialog({ theme, onClose }: { theme: ThemeRef | null
                   <Label htmlFor="theme-text" required hint={`${text.trim().length}/${min}+`}>
                     {TEXT[target].label}
                   </Label>
-                  <Textarea id="theme-text" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder={TEXT[target].placeholder} aria-invalid={!!error || undefined} />
+                  <Textarea id="theme-text" rows={4} maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} placeholder={TEXT[target].placeholder} aria-invalid={!!error || undefined} />
                   <FieldError>{error}</FieldError>
                 </div>
               </div>

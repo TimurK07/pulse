@@ -8,13 +8,14 @@ import { useMeta } from "@/lib/client/queries";
 import type { Analytics } from "@/lib/services/analytics";
 import { TYPE_LABEL } from "@/lib/domain";
 import { fmtDate, fmtHours, fmtPct } from "@/lib/client/format";
-import { ErrorState, Skeleton } from "@/components/ui/states";
+import { RowsSkeleton, ErrorState, Skeleton } from "@/components/ui/states";
 import { cn } from "@/lib/cn";
 import { FlowChart } from "@/components/analytics/flow-chart";
 import { CategoryBars, MetricStrip, StatusBar, ThemesList, WorkloadTable } from "@/components/analytics/parts";
 import { DigestPanel } from "@/components/analytics/digest-panel";
 import { ThemeDecisionDialog, type ThemeRef } from "@/components/issue/theme-decision-dialog";
 import { useViewer, isManagerRole } from "@/components/shell/viewer";
+import { useHydrated } from "@/lib/client/hydrated";
 import { Select } from "@/components/ui/field";
 
 const PERIODS = [
@@ -25,6 +26,7 @@ const PERIODS = [
 
 export function AnalyticsView() {
   const viewer = useViewer();
+  const hydrated = useHydrated();
   const [theme, setTheme] = useState<ThemeRef | null>(null);
   const meta = useMeta();
   const sp = useSearchParams();
@@ -39,6 +41,8 @@ export function AnalyticsView() {
   };
   const q = useQuery({ queryKey: ["analytics", f], queryFn: () => api.get<Analytics>(`/api/analytics${qs(f)}`) });
   const a = q.data;
+  // фильтры строятся из справочника в кэше — рендерим после гидратации (см. useHydrated)
+  if (!hydrated) return <RowsSkeleton rows={6} />;
 
   return (
     <div className="pb-16">
@@ -90,7 +94,7 @@ export function AnalyticsView() {
               { label: "Обращений", value: String(a.totals.total), hint: `Проблемы: ${a.byType[0].count}, предложения: ${a.byType[1].count}, отзывы: ${a.byType[2].count}` },
               { label: "Рассмотрено", value: fmtPct(a.totals.respondedShare), hint: "Доля обращений, на которые ответственный отреагировал (взял в работу, ответил или запросил уточнение)" },
               { label: "Первая реакция", value: fmtHours(a.totals.avgFirstResponseHours), hint: `Среднее время от подачи до первой реакции, календарные часы. Медиана: ${fmtHours(a.totals.medianFirstResponseHours)}` },
-              { label: "Реакция в срок", value: fmtPct(a.totals.firstResponseOnTimeShare), hint: "Доля первых реакций, уложившихся в норматив по приоритету", tone: (a.totals.firstResponseOnTimeShare ?? 1) >= 0.9 ? "ok" : undefined },
+              { label: "Реакция в срок", value: fmtPct(a.totals.firstResponseOnTimeShare), hint: "Доля обращений с первой реакцией в пределах норматива; оставшиеся без ответа после норматива считаются не в срок", tone: (a.totals.firstResponseOnTimeShare ?? 1) >= 0.9 ? "ok" : undefined },
               { label: "С результатом", value: fmtPct(a.totals.resolvedWithDecisionShare), hint: "Доля обращений с финальным статусом и зафиксированным текстом решения или мотивированного отказа" },
               { label: "Просрочено сейчас", value: String(a.totals.overdue), hint: `Открытые обращения с истёкшим сроком реакции (${a.totals.reactionOverdue}) или решения`, tone: a.totals.overdue ? "danger" : undefined },
             ]}

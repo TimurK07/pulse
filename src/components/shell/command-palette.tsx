@@ -63,12 +63,13 @@ export function CommandPalette({ open, onOpenChange, role }: { open: boolean; on
               value={q}
               onValueChange={setQ}
               autoFocus
+              maxLength={200}
               placeholder="Код, слово из заголовка или раздел…"
               className="h-12 w-full border-b border-line bg-transparent px-4 text-[15px] text-ink outline-none placeholder:text-ink-4"
             />
             <Command.List className="max-h-[360px] overflow-y-auto p-1.5 scrollbar-thin">
               <Command.Empty className="px-3 py-6 text-meta text-ink-3">
-                {debounced.length >= 2 && results.isFetching ? "Ищем…" : "Ничего не найдено"}
+                {debounced.length >= 2 && results.isFetching ? "Ищем…" : results.isError ? "Поиск временно недоступен" : "Ничего не найдено"}
               </Command.Empty>
               {!!results.data?.items.length && (
                 <Command.Group heading="Обращения" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-micro [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-ink-3">

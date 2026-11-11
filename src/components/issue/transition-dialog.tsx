@@ -57,6 +57,7 @@ export function TransitionDialog({
                   id="transition-text"
                   autoFocus
                   rows={5}
+                  maxLength={4000}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder={req?.placeholder ?? `Коротко поясните автору, что означает «${STATUS_LABEL[target]}».`}

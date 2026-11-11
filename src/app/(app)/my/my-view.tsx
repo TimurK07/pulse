@@ -59,6 +59,7 @@ export function MyView() {
       <Section title="Открытые" items={active} />
       <Section title="Завершённые" items={done} />
 
+      {supported.isError && <ErrorState message={`Не удалось загрузить поддержанные обращения: ${errorMessage(supported.error)}`} onRetry={() => supported.refetch()} />}
       {!!supported.data?.items.length && (
         <Section title="Вы поддержали" items={supported.data.items} note="Обращения коллег, с которыми вы тоже сталкиваетесь. Об итоге придёт уведомление." />
       )}
