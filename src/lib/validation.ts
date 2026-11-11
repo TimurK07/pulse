@@ -75,3 +75,11 @@ export const aiTextSchema = z.object({
   description: z.string().max(LIMITS.descriptionMax).default(""),
   type: issueTypeSchema.optional(),
 });
+
+export const themeDecisionSchema = z.object({
+  title: trimmed(3, 160, "Название темы"),
+  codes: z.array(z.string().regex(/^[A-Z]-\d{3,}$/, "Некорректный код обращения")).min(1, "Выберите хотя бы одно обращение").max(30),
+  status: z.enum(["IN_PROGRESS", "IMPLEMENTED", "REJECTED"]),
+  text: z.string().max(LIMITS.commentMax),
+  ownerId: z.string().nullable().optional(),
+});

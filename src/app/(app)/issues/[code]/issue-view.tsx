@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Check, Download, EyeOff, Link2, Lock, Paperclip, ThumbsUp, Upload } from "lucide-react";
+import { ArrowLeft, Check, Download, EyeOff, Layers, Link2, Lock, Paperclip, ThumbsUp, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { api, errorMessage, ApiClientError } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
@@ -15,6 +15,7 @@ import {
   PRIORITY_ORDER,
   STATUS_LABEL,
   isOpen,
+  pluralRu,
   type IssueStatus,
 } from "@/lib/domain";
 import type { IssueDetail } from "@/lib/services/issues";
@@ -181,6 +182,30 @@ export function IssueView({ code }: { code: string }) {
                   {i.decidedBy?.name}
                   {i.decidedBy?.title && <>, {i.decidedBy.title}</>} · {i.decisionAt && fmtDate(i.decisionAt)}
                 </p>
+              </section>
+            )}
+
+            {i.themeDecision && (
+              <section className="mt-4 flex gap-3 rounded-ctl border border-line px-4 py-3" aria-label="Системное решение">
+                <Layers className="mt-0.5 size-4 shrink-0 text-ink-3" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-ui font-medium text-ink">Решается системно: «{i.themeDecision.title}»</p>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1 text-meta text-ink-2">
+                    <span>
+                      Одно решение на {i.themeDecision.total} {pluralRu(i.themeDecision.total, "обращение", "обращения", "обращений")}
+                      {i.themeDecision.related.length > 0 ? ", вместе с" : ""}
+                    </span>
+                    {i.themeDecision.related.map((c) => (
+                      <Link key={c} href={`/issues/${c}`} className="mono-id rounded-chip border border-line px-1 text-ink-2 hover:border-ink-3 hover:text-ink">
+                        {c}
+                      </Link>
+                    ))}
+                  </p>
+                  {i.status === "IN_PROGRESS" && <p className="mt-1.5 whitespace-pre-wrap text-meta text-ink">{i.themeDecision.text}</p>}
+                  <p className="mt-1.5 text-micro text-ink-3">
+                    {i.themeDecision.owner ? `Владелец темы: ${i.themeDecision.owner} · ` : ""}решение: {i.themeDecision.decidedBy}, {fmtDate(i.themeDecision.createdAt)}
+                  </p>
+                </div>
               </section>
             )}
 

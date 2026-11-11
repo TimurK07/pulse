@@ -101,6 +101,8 @@ model User {
   notifications  Notification[]
   primaryRules   RoutingRule[]  @relation("RulePrimary")
   backupRules    RoutingRule[]  @relation("RuleBackup")
+  ownedThemeDecisions ThemeDecision[] @relation("ThemeDecisionOwner")
+  themeDecisions      ThemeDecision[] @relation("ThemeDecisionAuthor")
 }
 
 model Category {
@@ -186,6 +188,10 @@ model Issue {
   aiTriage     Json?
   aiTriageHash String?
 
+  /// системное решение, принятое сразу по нескольким обращениям одной темы
+  themeDecisionId String?
+  themeDecision   ThemeDecision? @relation(fields: [themeDecisionId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -201,6 +207,23 @@ model Issue {
   @@index([authorId])
   @@index([categoryId])
   @@index([createdAt])
+  @@index([themeDecisionId])
+}
+
+/// Одно решение по повторяющейся теме: закрывает или берёт в работу сразу все её обращения
+model ThemeDecision {
+  id            String      @id @default(cuid())
+  title         String
+  text          String
+  status        IssueStatus
+  ownerId       String?
+  owner         User?       @relation("ThemeDecisionOwner", fields: [ownerId], references: [id])
+  decidedById   String
+  decidedBy     User        @relation("ThemeDecisionAuthor", fields: [decidedById], references: [id])
+  /// сколько сотрудников (авторов и поддержавших) получили уведомление
+  notifiedCount Int         @default(0)
+  createdAt     DateTime    @default(now())
+  issues        Issue[]
 }
 
 model Comment {

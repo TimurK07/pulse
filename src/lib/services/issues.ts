@@ -25,6 +25,7 @@ import { computeDeadlines, type SlaPolicyMap } from "@/lib/sla";
 import type { CreateIssueInput, ListQuery } from "@/lib/validation";
 import { managerIds, notify } from "./notifications";
 import { notifyBitrix, type BitrixEvent } from "@/lib/integrations/bitrix24";
+import { themeDecisionFor } from "./themes";
 
 // ───────────────────────── контекст доступа ─────────────────────────
 
@@ -222,7 +223,8 @@ async function loadForAccess(user: CurrentUser, where: Prisma.IssueWhereUniqueIn
 
 export async function getIssue(user: CurrentUser, code: string) {
   const { issue, access, isSupporter } = await loadForAccess(user, { code });
-  return serializeDetail(issue, user, access, isSupporter);
+  const themeDecision = issue.themeDecisionId ? await themeDecisionFor(issue.themeDecisionId, issue.id) : null;
+  return { ...serializeDetail(issue, user, access, isSupporter), themeDecision };
 }
 
 type DetailRow = Prisma.IssueGetPayload<{ include: typeof detailInclude }>;
@@ -316,7 +318,7 @@ function serializeDetail(i: DetailRow, user: CurrentUser, access: IssueAccess, i
     },
   };
 }
-export type IssueDetail = ReturnType<typeof serializeDetail>;
+export type IssueDetail = ReturnType<typeof serializeDetail> & { themeDecision: Awaited<ReturnType<typeof themeDecisionFor>> };
 
 // ───────────────────────── создание ─────────────────────────
 

@@ -77,7 +77,7 @@ export function CategoryBars({ rows, max = 10 }: { rows: Analytics["byCategory"]
   );
 }
 
-export function ThemesList({ themes, compact }: { themes: Analytics["themes"]; compact?: boolean }) {
+export function ThemesList({ themes, compact, onResolve }: { themes: Analytics["themes"]; compact?: boolean; onResolve?: (t: Analytics["themes"][number]) => void }) {
   if (!themes.length) return <p className="text-meta text-ink-3">Повторяющихся тем пока не найдено.</p>;
   return (
     <ol className="divide-y divide-line border-y border-line">
@@ -95,7 +95,7 @@ export function ThemesList({ themes, compact }: { themes: Analytics["themes"]; c
               {!compact && t.departments.length > 0 && <span className="ml-1 text-micro text-ink-3">{t.departments.join(", ")}</span>}
             </div>
           </div>
-          <div className="flex gap-4 text-meta text-ink-3 sm:justify-end">
+          <div className="flex flex-wrap items-center gap-4 text-meta text-ink-3 sm:justify-end">
             <span>
               <span className="mono-num text-ink">{t.codes.length}</span> обращ.
             </span>
@@ -105,6 +105,11 @@ export function ThemesList({ themes, compact }: { themes: Analytics["themes"]; c
             <span>
               поддержали <span className="mono-num text-ink">{t.supporters}</span>
             </span>
+            {onResolve && t.openCount > 0 && (
+              <button type="button" onClick={() => onResolve(t)} className="font-medium text-accent-text hover:underline">
+                Решить тему →
+              </button>
+            )}
           </div>
         </li>
       ))}

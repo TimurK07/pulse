@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, errorMessage, qs } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
@@ -12,6 +13,7 @@ import { cn } from "@/lib/cn";
 import { FlowChart } from "@/components/analytics/flow-chart";
 import { CategoryBars, MetricStrip, StatusBar, ThemesList, WorkloadTable } from "@/components/analytics/parts";
 import { DigestPanel } from "@/components/analytics/digest-panel";
+import { ThemeDecisionDialog, type ThemeRef } from "@/components/issue/theme-decision-dialog";
 import { useViewer, isManagerRole } from "@/components/shell/viewer";
 import { Select } from "@/components/ui/field";
 
@@ -23,6 +25,7 @@ const PERIODS = [
 
 export function AnalyticsView() {
   const viewer = useViewer();
+  const [theme, setTheme] = useState<ThemeRef | null>(null);
   const meta = useMeta();
   const sp = useSearchParams();
   const router = useRouter();
@@ -126,7 +129,7 @@ export function AnalyticsView() {
               <p className="mb-3 text-meta text-ink-3">
                 Темы выявлены локальным алгоритмом: доменный словарь понятий + сходство текстов (TF-IDF). Уточнённые формулировки — в сводке для руководства.
               </p>
-              <ThemesList themes={a.themes} />
+              <ThemesList themes={a.themes} onResolve={isManagerRole(viewer.role) ? (t) => setTheme({ title: t.title, codes: t.codes }) : undefined} />
             </section>
 
             <div className="grid gap-10 xl:grid-cols-2">
@@ -186,6 +189,7 @@ export function AnalyticsView() {
           </div>
         </>
       )}
+      <ThemeDecisionDialog theme={theme} onClose={() => setTheme(null)} />
     </div>
   );
 }

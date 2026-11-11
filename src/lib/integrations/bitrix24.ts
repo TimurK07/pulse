@@ -19,6 +19,16 @@ export type BitrixEvent =
   | { kind: "escalated"; code: string; title: string; note: string; assignee: string | null; isPrivate: boolean }
   | { kind: "decision"; code: string; title: string; status: IssueStatus; text: string; by: string; isPrivate: boolean }
   | { kind: "info_answered"; code: string; title: string; assignee: string | null; isPrivate: boolean }
+  | { kind: "theme"; title: string; status: IssueStatus; text: string; codes: string[]; owner: string | null; by: string; notified: number }
+  | {
+      kind: "digest";
+      headline: string;
+      issuesCount: number;
+      problems: { title: string; codes: string[]; impact: "high" | "medium" | "low"; recommendation: string }[];
+      quickWins: number;
+      risks: number;
+      by: string;
+    }
   | { kind: "test" };
 
 export interface BitrixConfig {
@@ -62,6 +72,8 @@ export function formatBitrixMessage(e: BitrixEvent, publicUrl: string | null): s
   if (e.kind === "test") {
     return "[B]PULSE подключён к Битрикс24[/B]\nСюда будут приходить новые обращения, переназначения, просрочки и принятые решения.";
   }
+  if (e.kind === "theme") return limit(formatTheme(e, publicUrl));
+  if (e.kind === "digest") return limit(formatDigest(e, publicUrl));
   const title = e.isPrivate ? "конфиденциальное обращение" : clean(e.title, 160);
   const link = publicUrl ? `\n[URL=${publicUrl}/issues/${e.code}]Открыть в PULSE[/URL]` : "";
   let head: string;
@@ -88,8 +100,47 @@ export function formatBitrixMessage(e: BitrixEvent, publicUrl: string | null): s
       body = `${title}\nОтветственный: ${e.assignee ?? "не назначен"}`;
       break;
   }
-  const msg = `[B]${head}[/B]\n${body}${link}`;
+  return limit(`[B]${head}[/B]\n${body}${link}`);
+}
+
+function limit(msg: string) {
   return msg.length > MAX_LEN ? `${msg.slice(0, MAX_LEN - 1)}…` : msg;
+}
+
+const plural = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+
+/** Одно сообщение на всю тему. Коды обращений без заголовков — конфиденциальные не раскрываются */
+function formatTheme(e: Extract<BitrixEvent, { kind: "theme" }>, publicUrl: string | null) {
+  const n = e.codes.length;
+  const lines = [
+    `[B]Системное решение · ${STATUS_LABEL[e.status].toLowerCase()}[/B]`,
+    `«${clean(e.title, 120)}» — ${n} ${plural(n, "обращение", "обращения", "обращений")}: ${e.codes.join(", ")}`,
+    clean(e.text, 400),
+    `${e.owner ? `Владелец темы: ${e.owner} · ` : ""}решение: ${e.by} · уведомлено сотрудников: ${e.notified}`,
+  ];
+  if (publicUrl && e.codes[0]) lines.push(`[URL=${publicUrl}/issues/${e.codes[0]}]Открыть в PULSE[/URL]`);
+  return lines.join("\n");
+}
+
+const IMPACT: Record<string, string> = { high: "высокое влияние", medium: "среднее влияние", low: "низкое влияние" };
+
+function formatDigest(e: Extract<BitrixEvent, { kind: "digest" }>, publicUrl: string | null) {
+  const lines = [`[B]Сводка для руководства[/B] · по ${e.issuesCount} ${plural(e.issuesCount, "обращению", "обращениям", "обращениям")}`, clean(e.headline, 240)];
+  const top = e.problems.slice(0, 3);
+  if (top.length) {
+    lines.push("", "[B]Системные проблемы[/B]");
+    top.forEach((p, i) => {
+      lines.push(`${i + 1}. ${clean(p.title, 120)} — ${p.codes.slice(0, 8).join(", ")} (${IMPACT[p.impact] ?? p.impact})`);
+      lines.push(`→ ${clean(p.recommendation, 220)}`);
+    });
+  }
+  lines.push("", `Быстрых улучшений: ${e.quickWins} · рисков: ${e.risks} · отправил: ${e.by}`);
+  if (publicUrl) lines.push(`[URL=${publicUrl}/analytics]Открыть аналитику в PULSE[/URL]`);
+  return lines.join("\n");
 }
 
 // ───────── отправка ─────────
@@ -168,13 +219,17 @@ export function notifyBitrix(e: BitrixEvent) {
   queue = queue.then(() => deliver(message)).catch(() => undefined);
 }
 
-/** Тестовое сообщение из настроек: ждём результат, чтобы показать его администратору */
-export function sendBitrixTest(): Promise<SendResult> {
+/** Отправка с ожиданием результата: тестовое сообщение из настроек, сводка по кнопке */
+export function sendBitrixNow(e: BitrixEvent): Promise<SendResult> {
   const cfg = bitrixConfig();
-  const message = formatBitrixMessage({ kind: "test" }, cfg.publicUrl);
+  const message = formatBitrixMessage(e, cfg.publicUrl);
   const run = queue.then(() => deliver(message));
   queue = run.catch(() => undefined);
   return run;
+}
+
+export function sendBitrixTest(): Promise<SendResult> {
+  return sendBitrixNow({ kind: "test" });
 }
 
 export function bitrixStatus() {

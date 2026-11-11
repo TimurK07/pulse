@@ -306,7 +306,7 @@ const SEED_FILES = [
 async function main() {
   console.log("PULSE seed: очистка…");
   await db.$executeRawUnsafe(
-    `TRUNCATE "Notification","Supporter","Attachment","IssueEvent","Comment","Issue","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
+    `TRUNCATE "Notification","Supporter","Attachment","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
   );
   await db.department.updateMany({ data: { headId: null } });
   await db.user.deleteMany();

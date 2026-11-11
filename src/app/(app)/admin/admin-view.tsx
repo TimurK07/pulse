@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { FieldError, Input, Label } from "@/components/ui/field";
 import { ErrorState, Skeleton } from "@/components/ui/states";
 import { Tip } from "@/components/ui/tooltip";
+import { Segmented } from "@/components/ui/segmented";
 
 type U = { id: string; name: string; isAvailable: boolean; isActive: boolean };
 interface Overview {
@@ -578,29 +579,6 @@ function SearchField({ value, onChange, label, placeholder }: { value: string; o
         className="h-8 w-full rounded-ctl border border-line bg-raised pl-8 pr-2 text-ui outline-none placeholder:text-ink-4 focus:border-focus"
       />
     </label>
-  );
-}
-
-function Segmented({ value, onChange, options, label, hints }: { value: string; onChange: (v: string) => void; options: [string, string][]; label: string; hints?: Record<string, string> }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="flex max-w-full overflow-x-auto rounded-ctl bg-subtle p-0.5 scrollbar-thin">
-      {options.map(([v, l]) => (
-        <Tip key={v} content={hints?.[v]}>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={value === v}
-            onClick={() => onChange(v)}
-            className={cn(
-              "h-7 shrink-0 whitespace-nowrap rounded-[5px] px-2.5 text-label text-ink-2 transition-colors-fast hover:text-ink",
-              value === v && "bg-raised font-medium text-ink shadow-[0_1px_2px_rgba(28,27,24,.08)]",
-            )}
-          >
-            {l}
-          </button>
-        </Tip>
-      ))}
-    </div>
   );
 }
 

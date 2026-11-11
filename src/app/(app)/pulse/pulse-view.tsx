@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -18,6 +18,8 @@ import { ErrorState, RowsSkeleton, Skeleton } from "@/components/ui/states";
 import { PageHeader, SectionTitle } from "@/components/ui/page";
 import { StatusIcon } from "@/components/ui/status";
 import type { IssueStatus } from "@/lib/domain";
+import { ThemeDecisionDialog, type ThemeRef } from "@/components/issue/theme-decision-dialog";
+import { useViewer, isManagerRole } from "@/components/shell/viewer";
 
 
 export function PulseView() {
@@ -249,6 +251,8 @@ function Bottlenecks({ analytics }: { analytics?: Analytics }) {
 
 function Themes({ analytics }: { analytics?: Analytics }) {
   const themes = (analytics?.themes ?? []).slice(0, 5);
+  const canDecide = isManagerRole(useViewer().role);
+  const [theme, setTheme] = useState<ThemeRef | null>(null);
   return (
     <section aria-label="Повторяющиеся проблемы">
       <SectionTitle action={<Link href="/analytics" className="text-ink-2 hover:text-ink">AI-сводка →</Link>}>
@@ -271,8 +275,15 @@ function Themes({ analytics }: { analytics?: Analytics }) {
                   </Link>
                 ))}
               </div>
-              <p className="mt-1 text-micro text-ink-3">
-                открыто {t.openCount} · поддержали {t.supporters}
+              <p className="mt-1 flex flex-wrap items-center gap-x-3 text-micro text-ink-3">
+                <span>
+                  открыто {t.openCount} · поддержали {t.supporters}
+                </span>
+                {canDecide && t.openCount > 0 && (
+                  <button type="button" onClick={() => setTheme({ title: t.title, codes: t.codes })} className="font-medium text-accent-text hover:underline">
+                    Решить тему →
+                  </button>
+                )}
               </p>
             </li>
           ))}
@@ -280,6 +291,7 @@ function Themes({ analytics }: { analytics?: Analytics }) {
       ) : (
         <p className="text-meta text-ink-3">Повторяющихся тем пока не найдено.</p>
       )}
+      <ThemeDecisionDialog theme={theme} onClose={() => setTheme(null)} />
     </section>
   );
 }

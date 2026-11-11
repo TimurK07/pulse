@@ -78,3 +78,28 @@ describe("Битрикс24: отправка", () => {
     expect(r).toMatchObject({ ok: false, reason: "Нет соединения с Битрикс24", retryable: true });
   });
 });
+
+describe("Битрикс24: системное решение и сводка", () => {
+  it("тема — одно сообщение с кодами, владельцем и числом уведомлённых; BB-коды из текста вырезаются", () => {
+    const m = formatBitrixMessage(
+      { kind: "theme", title: "Прозрачность [B]статусов[/B]", status: "IMPLEMENTED", text: "Лента этапов [URL=http://evil]тут[/URL] во всех заявках", codes: ["A-002", "A-005", "A-011"], owner: "Олег Петров", by: "Андрей Соколов", notified: 9 },
+      "https://pulse.example.ru",
+    );
+    expect(m).toContain("[B]Системное решение · реализовано[/B]");
+    expect(m).toContain("«Прозрачность статусов» — 3 обращения: A-002, A-005, A-011");
+    expect(m).toContain("Владелец темы: Олег Петров · решение: Андрей Соколов · уведомлено сотрудников: 9");
+    expect(m).toContain("[URL=https://pulse.example.ru/issues/A-002]");
+    expect(m).not.toContain("evil");
+  });
+  it("сводка — заголовок, топ-3 проблем с рекомендациями и ссылка на аналитику, не длиннее 2000", () => {
+    const problems = Array.from({ length: 5 }, (_, i) => ({ title: `Проблема ${i + 1}`, codes: ["A-002", "A-005"], impact: "high" as const, recommendation: "Назначить владельца ".repeat(30) }));
+    const m = formatBitrixMessage({ kind: "digest", headline: "Главное за период", issuesCount: 20, problems, quickWins: 3, risks: 2, by: "Андрей Соколов" }, "https://pulse.example.ru");
+    expect(m).toContain("[B]Сводка для руководства[/B] · по 20 обращениям");
+    expect(m).toContain("1. Проблема 1 — A-002, A-005 (высокое влияние)");
+    expect(m).toContain("3. Проблема 3");
+    expect(m).not.toContain("Проблема 4");
+    expect(m).toContain("Быстрых улучшений: 3 · рисков: 2");
+    expect(m).toContain("[URL=https://pulse.example.ru/analytics]");
+    expect(m.length).toBeLessThanOrEqual(2000);
+  });
+});

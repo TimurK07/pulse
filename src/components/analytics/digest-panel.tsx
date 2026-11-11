@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { SourceBadge } from "@/components/ui/status";
 import { Skeleton } from "@/components/ui/states";
 import { cn } from "@/lib/cn";
-import { ArrowRight, TrendingUp, TriangleAlert, Zap } from "lucide-react";
+import { ArrowRight, Send, TrendingUp, TriangleAlert, Zap } from "lucide-react";
+import { useState } from "react";
+import { ThemeDecisionDialog, type ThemeRef } from "@/components/issue/theme-decision-dialog";
 
 interface DigestContent {
   headline: string;
@@ -71,11 +73,17 @@ const Codes = ({ codes }: { codes: string[] }) => (
 
 export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["digest"], queryFn: () => api.get<{ digest: Digest | null }>("/api/ai/digest") });
+  const q = useQuery({ queryKey: ["digest"], queryFn: () => api.get<{ digest: Digest | null; bitrix?: boolean }>("/api/ai/digest") });
+  const [theme, setTheme] = useState<ThemeRef | null>(null);
+  const share = useMutation({
+    mutationFn: () => api.post("/api/ai/digest/share"),
+    onSuccess: () => toast.success("Сводка отправлена в рабочий чат Битрикс24"),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const gen = useMutation({
     mutationFn: () => api.post<{ digest: Digest; reused: boolean }>("/api/ai/digest"),
     onSuccess: (d) => {
-      qc.setQueryData(["digest"], { digest: d.digest });
+      qc.setQueryData(["digest"], (old: { bitrix?: boolean } | undefined) => ({ ...old, digest: d.digest }));
       if (d.reused) toast.info("Данные не изменились с прошлой сводки — показана последняя версия без нового запроса к AI");
       else if (d.digest.source === "local") toast.warning(d.digest.content.notice ?? "Сводка подготовлена локальным алгоритмом");
       else toast.success("Сводка обновлена");
@@ -98,6 +106,11 @@ export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
               : "Системные проблемы, быстрые улучшения и риски по всем обращениям. Персональные данные авторов не передаются."}
           </p>
         </div>
+        {canGenerate && d && q.data?.bitrix && (
+          <Button onClick={() => share.mutate()} loading={share.isPending} variant="ghost" disabled={gen.isPending}>
+            <Send className="size-3.5" aria-hidden /> В Битрикс24
+          </Button>
+        )}
         {canGenerate && (
           <Button onClick={() => gen.mutate()} loading={gen.isPending} variant={d ? "secondary" : "primary"}>
             {d ? "Обновить сводку" : "Сформировать сводку"}
@@ -137,13 +150,20 @@ export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
                         <div className="mt-2">
                           <Codes codes={p.issueCodes} />
                         </div>
-                        <p className="mt-2.5 flex gap-2 rounded-ctl bg-subtle/70 px-3 py-2 text-meta text-ink">
-                          <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-accent-text" aria-hidden />
-                          <span>
-                            <span className="font-medium">Что сделать: </span>
-                            {p.recommendation}
-                          </span>
-                        </p>
+                        <div className="mt-2.5 flex flex-wrap items-start gap-x-3 gap-y-2 rounded-ctl bg-subtle/70 px-3 py-2 text-meta text-ink">
+                          <p className="flex min-w-0 flex-1 basis-64 gap-2">
+                            <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-accent-text" aria-hidden />
+                            <span>
+                              <span className="font-medium">Что сделать: </span>
+                              {p.recommendation}
+                            </span>
+                          </p>
+                          {canGenerate && p.issueCodes.length > 0 && (
+                            <button type="button" onClick={() => setTheme({ title: p.title, codes: p.issueCodes })} className="shrink-0 font-medium text-accent-text hover:underline">
+                              Решить тему →
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <ImpactMeter impact={p.impact} count={p.issueCodes.length} />
                     </li>
@@ -181,6 +201,7 @@ export function DigestPanel({ canGenerate }: { canGenerate: boolean }) {
           </div>
         </div>
       )}
+      <ThemeDecisionDialog theme={theme} onClose={() => setTheme(null)} />
     </section>
   );
 }

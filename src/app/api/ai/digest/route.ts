@@ -1,11 +1,12 @@
 import { route } from "@/lib/api";
 import { generateDigest, latestDigest } from "@/lib/ai/features";
+import { bitrixConfig } from "@/lib/integrations/bitrix24";
 
 const serialize = (d: Awaited<ReturnType<typeof latestDigest>>) =>
   d ? { id: d.id, source: d.source, model: d.model, content: d.content, issuesCount: d.issuesCount, createdAt: d.createdAt.toISOString() } : null;
 
 // Сводка охватывает все обращения компании — только для руководителя и администратора
-export const GET = route(async () => ({ digest: serialize(await latestDigest()) }), { roles: ["MANAGER", "ADMIN"] });
+export const GET = route(async () => ({ digest: serialize(await latestDigest()), bitrix: bitrixConfig().enabled }), { roles: ["MANAGER", "ADMIN"] });
 
 export const POST = route(
   async ({ user }) => {
