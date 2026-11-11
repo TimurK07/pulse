@@ -24,6 +24,8 @@ export interface CorpusIssue {
   supportersCount: number;
   decision: string | null;
   createdAt: Date;
+  /** конфиденциальное: заголовок не может стать названием темы */
+  isPrivate?: boolean;
 }
 
 const IDEA_MARKERS = ["предлага", "можно", "было бы", "полезно", "стоит", "хорошо бы", "давайте", "идея"];
@@ -134,11 +136,14 @@ export function localThemes(corpus: CorpusIssue[], threshold = 0.3): Theme[] {
   return groups
     .map(({ ids, concept }) => {
       const issues = ids.map((id) => byId.get(id)!);
-      const lead = [...issues].sort((a, b) => b.supportersCount - a.supportersCount || a.createdAt.getTime() - b.createdAt.getTime())[0];
+      // название темы видят авторы всех её обращений и рабочий чат — берём только из публичных
+      const lead = issues
+        .filter((i) => !i.isPrivate)
+        .sort((a, b) => b.supportersCount - a.supportersCount || a.createdAt.getTime() - b.createdAt.getTime())[0];
       const label = concept ? CONCEPTS.find((c) => c.key === concept)?.label : undefined;
       return {
         key: concept ?? ids.slice().sort().join("|"),
-        title: label ?? lead.title,
+        title: label ?? lead?.title ?? `Похожие обращения: ${issues[0].categoryName}`,
         issueIds: ids,
         codes: issues.map((i) => i.code).sort(),
         categories: [...new Set(issues.map((i) => i.categoryName))],

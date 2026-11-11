@@ -11,12 +11,14 @@ import type { CurrentUser } from "@/lib/auth/current-user";
 const sel = { id: true, name: true, email: true, title: true, role: true, departmentId: true, isActive: true, department: { select: { id: true, name: true } }, headOf: { select: { id: true } } } as const;
 let employee: CurrentUser, manager: CurrentUser, handler: CurrentUser, colleagues: CurrentUser[];
 const sent: string[] = [];
+let failBitrix = false;
 
 beforeAll(async () => {
   process.env.BITRIX24_WEBHOOK_URL = "https://pulse-test.bitrix24.ru/rest/1/testsecret123/";
   process.env.BITRIX24_DIALOG_ID = "chat7";
   process.env.PULSE_PUBLIC_URL = "https://pulse.example.ru";
   vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+    if (failBitrix) throw new TypeError("fetch failed");
     sent.push(JSON.parse(String(init.body)).MESSAGE);
     return new Response(JSON.stringify({ result: 1 }), { status: 200 });
   });
@@ -34,6 +36,7 @@ afterAll(async () => {
 });
 beforeEach(() => {
   sent.length = 0;
+  failBitrix = false;
   __resetBitrixForTests();
 });
 
@@ -91,7 +94,8 @@ describe("Системное решение по теме", () => {
     const ea = rows.find((i) => i.code === a.code)!.events.filter((e) => e.type === "STATUS_CHANGED").map((e) => `${e.fromValue}>${e.toValue}`);
     expect(ea.slice(-2)).toEqual(["NEW>IN_PROGRESS", "IN_PROGRESS>IMPLEMENTED"]);
 
-    const notes = await db.notification.findMany({ where: { issueId: a.id, title: { contains: "системное решение" } } });
+    // ровно одно уведомление на человека, хотя автор подал оба обращения темы
+    const notes = await db.notification.findMany({ where: { issueId: { in: [a.id, b.id] }, title: { contains: "системное решение" } } });
     expect(notes.map((n) => n.userId).sort()).toEqual([employee.id, ...colleagues.map((c) => c.id)].sort());
 
     await __flushBitrixQueue();
@@ -137,6 +141,59 @@ describe("Системное решение по теме", () => {
     expect(m).toContain("в работе");
     expect(m).toContain(`Владелец темы: ${handler.name}`);
     expect(m).not.toContain("конфиденциальное про согласование");
+  });
+
+  it("повторное решение и двойная отправка не создают дублей", async () => {
+    const a = await newIssue("Тема: двойной клик по решению");
+    const input = { title: "Двойная отправка", codes: [a.code], status: "IN_PROGRESS" as const, text: "Берём в работу вместе с остальными обращениями темы." };
+    const results = await Promise.allSettled([decideTheme(manager, input), decideTheme(manager, input)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { status: expect.any(Number) } });
+    const issue = await db.issue.findUniqueOrThrow({ where: { code: a.code }, include: { comments: true } });
+    expect(await db.themeDecision.count({ where: { issues: { some: { id: issue.id } } } })).toBe(1);
+    expect(await db.themeDecision.count({ where: { title: "Двойная отправка" } })).toBe(1); // откат второй транзакции
+    expect(issue.comments.filter((c) => c.body.includes("Двойная отправка"))).toHaveLength(1);
+    expect(await db.notification.count({ where: { issueId: issue.id, title: { contains: "системное решение" } } })).toBe(1);
+    // повтор того же решения позже
+    await expect(decideTheme(manager, input)).rejects.toThrow(/по системному решению «Двойная отправка»/);
+    // а следующий шаг — «Реализовано» — разрешён
+    await expect(decideTheme(manager, { ...input, status: "IMPLEMENTED", text: "Готово: лента этапов работает во всех заявках." })).resolves.toMatchObject({ status: "IMPLEMENTED" });
+  });
+
+  it("частичная ошибка откатывает всё решение", async () => {
+    const a = await newIssue("Тема: частичная ошибка, первое");
+    const b = await newIssue("Тема: частичная ошибка, второе");
+    // второе обращение «параллельно» меняет другой сотрудник между чтением и записью
+    const original = db.issue.findMany.bind(db.issue);
+    const spy = vi.spyOn(db.issue, "findMany").mockImplementationOnce(((args: Parameters<typeof original>[0]) =>
+      original(args).then(async (rows) => {
+        await db.issue.update({ where: { code: b.code }, data: { status: "IN_REVIEW" } });
+        return rows;
+      })) as unknown as typeof original);
+    await expect(
+      decideTheme(manager, { title: "Частичная", codes: [a.code, b.code], status: "IN_PROGRESS", text: "План решения для обеих частей темы." }),
+    ).rejects.toMatchObject({ status: 409 });
+    spy.mockRestore();
+    const rows = await db.issue.findMany({ where: { code: { in: [a.code, b.code] } } });
+    expect(rows.every((r) => r.themeDecisionId === null)).toBe(true);
+    expect(rows.find((r) => r.code === a.code)!.status).toBe("NEW");
+    expect(await db.themeDecision.count({ where: { title: "Частичная" } })).toBe(0);
+  });
+
+  it("Битрикс24 недоступен — решение всё равно принимается", async () => {
+    failBitrix = true;
+    const a = await newIssue("Тема: Битрикс24 недоступен");
+    const r = await decideTheme(manager, { title: "Без Битрикс24", codes: [a.code], status: "IN_PROGRESS", text: "Решение принимается независимо от чата." });
+    await __flushBitrixQueue();
+    expect(r.codes).toEqual([a.code]);
+    expect((await db.issue.findUniqueOrThrow({ where: { code: a.code } })).status).toBe("IN_PROGRESS");
+  });
+
+  it("название темы не может повторять заголовок конфиденциального обращения", async () => {
+    const p = await newIssue("Конфиденциально: проблема с согласованием", { isPrivate: true });
+    await expect(
+      decideTheme(manager, { title: "конфиденциально — проблема с согласованием", codes: [p.code], status: "IN_PROGRESS", text: "План решения по конфиденциальному обращению." }),
+    ).rejects.toThrow(/конфиденциального обращения/);
   });
 
   it("проверки: права, закрытые обращения, короткий текст", async () => {

@@ -34,6 +34,14 @@ describe("локальный текстовый движок", () => {
     expect(themes[0].codes).toEqual(["A-1", "A-2"]);
     expect(themes[0].title).toBe("Прозрачность статусов и сроков");
   });
+  it("название темы не берётся из конфиденциального обращения", () => {
+    const zone = (code: string, title: string, extra: Partial<CorpusIssue> = {}) => mk(code, title, "Небольшая зона отдыха для перерывов в офисе с кофемашиной", extra);
+    const t1 = localThemes([zone("A-1", "Секретная жалоба на кухню", { isPrivate: true, supportersCount: 9 }), zone("A-2", "Зона отдыха")]);
+    expect(t1).toHaveLength(1);
+    expect(t1[0].title).toBe("Зона отдыха");
+    const t2 = localThemes([zone("A-1", "Секретная жалоба", { isPrivate: true }), zone("A-2", "Ещё секрет", { isPrivate: true })]);
+    expect(t2[0].title).toBe("Похожие обращения: К");
+  });
   it("локальный классификатор выбирает категорию по ключевым словам", () => {
     const r = localClassify({ title: "Повторный ввод в системы", description: "Одни и те же данные приходится вводить в разные системы, нужна синхронизация" }, [
       { id: "it", name: "Интеграции и IT", description: "", keywords: ["систем", "ввод", "синхрониз"] },

@@ -143,6 +143,19 @@ function formatDigest(e: Extract<BitrixEvent, { kind: "digest" }>, publicUrl: st
   return lines.join("\n");
 }
 
+/**
+ * Сводка для общего чата: проблемы, собранные только из конфиденциальных обращений, не отправляются,
+ * коды конфиденциальных обращений убираются из остальных.
+ */
+export function shareableProblems(
+  problems: { title: string; issueCodes: string[]; impact: "high" | "medium" | "low"; recommendation: string }[],
+  privateCodes: Set<string>,
+) {
+  return problems
+    .map((p) => ({ title: p.title, codes: p.issueCodes.filter((c) => !privateCodes.has(c)), impact: p.impact, recommendation: p.recommendation }))
+    .filter((p) => p.codes.length > 0);
+}
+
 // ───────── отправка ─────────
 
 export type SendResult = { ok: true; messageId: number } | { ok: false; reason: string; retryable: boolean };

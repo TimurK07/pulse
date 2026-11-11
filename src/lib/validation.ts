@@ -67,6 +67,8 @@ export const listQuerySchema = z.object({
   q: z.string().max(200).optional(),
   sort: z.enum(["created_desc", "created_asc", "deadline", "priority", "supporters"]).default("created_desc"),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+  /** точный набор обращений по кодам (диалог системного решения) */
+  codes: z.array(z.string().regex(/^[A-Z]-\d{3,}$/)).max(50).optional(),
 });
 export type ListQuery = z.infer<typeof listQuerySchema>;
 

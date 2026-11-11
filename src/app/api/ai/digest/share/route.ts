@@ -1,7 +1,8 @@
 import { route, badRequest } from "@/lib/api";
 import { latestDigest } from "@/lib/ai/features";
+import { db } from "@/lib/db";
 import type { DigestContent } from "@/lib/ai/local";
-import { bitrixConfig, sendBitrixNow } from "@/lib/integrations/bitrix24";
+import { bitrixConfig, sendBitrixNow, shareableProblems } from "@/lib/integrations/bitrix24";
 
 /** Отправить последнюю сводку для руководства в рабочий чат Битрикс24 */
 export const POST = route(
@@ -11,11 +12,17 @@ export const POST = route(
     const d = await latestDigest();
     if (!d) throw badRequest("Сначала сформируйте сводку");
     const c = d.content as unknown as DigestContent;
+    // общий чат шире круга руководителей: проблемы, собранные только из конфиденциальных
+    // обращений, не отправляем, а их коды убираем из остальных
+    const priv = new Set(
+      (await db.issue.findMany({ where: { isPrivate: true }, select: { code: true } })).map((i) => i.code),
+    );
+    const problems = shareableProblems(c.systemicProblems ?? [], priv);
     const result = await sendBitrixNow({
       kind: "digest",
       headline: c.headline,
       issuesCount: d.issuesCount,
-      problems: (c.systemicProblems ?? []).map((p) => ({ title: p.title, codes: p.issueCodes, impact: p.impact, recommendation: p.recommendation })),
+      problems,
       quickWins: c.quickWins?.length ?? 0,
       risks: c.risks?.length ?? 0,
       by: user.name,

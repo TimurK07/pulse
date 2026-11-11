@@ -68,6 +68,8 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
       assigneeId: true,
       isPrivate: true,
       firstResponseAt: true,
+      themeDecisionId: true,
+      themeDecision: { select: { title: true, status: true } },
       assignee: { select: { name: true } },
       supporters: { select: { userId: true } },
     },
@@ -76,6 +78,21 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
   if (missing.length) throw badRequest(`Обращения не найдены: ${missing.join(", ")}`);
   const closed = issues.filter((i) => !OPEN_STATUSES.includes(i.status));
   if (closed.length) throw badRequest(`Уже закрыты: ${closed.map((i) => i.code).join(", ")}. Уберите их из решения.`);
+
+  // повтор того же решения: обращения уже в работе по системному решению
+  const already = issues.filter((i) => i.themeDecisionId && i.status === input.status && i.themeDecision?.status === input.status);
+  if (already.length) {
+    throw badRequest(
+      `Уже ${STATUS_LABEL[input.status].toLowerCase()} по системному решению «${already[0].themeDecision!.title}»: ${already.map((i) => i.code).join(", ")}`,
+    );
+  }
+  // название темы видят авторы всех обращений и рабочий чат — оно не должно повторять конфиденциальное обращение
+  const norm = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (issues.some((i) => i.isPrivate && norm(i.title) === norm(title))) {
+    throw badRequest("Название темы совпадает с заголовком конфиденциального обращения. Сформулируйте тему обобщённо.", [
+      { path: "title", message: "сформулируйте обобщённо" },
+    ]);
+  }
 
   const plans = issues.map((i) => ({ issue: i, path: themePath(i.status, i.type, input.status) }));
   const stuck = plans.filter((p) => p.path === null);
@@ -94,9 +111,12 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
 
   const now = new Date();
   const resolved = RESOLVED_STATUSES.includes(input.status);
-  const recipients = new Set<string>();
+  // одно уведомление на человека, даже если он автор или сторонник нескольких обращений темы;
+  // ссылка ведёт на его собственное обращение, иначе — на поддержанное
+  const recipients = new Map<string, (typeof plans)[number]["issue"]>();
+  for (const { issue } of plans) if (issue.authorId !== user.id) recipients.set(issue.authorId, issue);
   for (const { issue } of plans) {
-    for (const id of [issue.authorId, ...issue.supporters.map((s) => s.userId)]) if (id !== user.id) recipients.add(id);
+    for (const s of issue.supporters) if (s.userId !== user.id && !recipients.has(s.userId)) recipients.set(s.userId, issue);
   }
 
   const decision = await db.$transaction(async (tx) => {
@@ -114,8 +134,9 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
         data.decidedById = user.id;
         data.resolvedAt = now;
       }
-      // оптимистичная блокировка: статус не должен был измениться, пока руководитель писал решение
-      const r = await tx.issue.updateMany({ where: { id: issue.id, status: issue.status }, data });
+      // оптимистичная блокировка: ни статус, ни привязка к решению не должны были измениться,
+      // пока руководитель писал решение (защищает и от двойной отправки)
+      const r = await tx.issue.updateMany({ where: { id: issue.id, status: issue.status, themeDecisionId: issue.themeDecisionId }, data });
       if (r.count === 0) throw new ApiError(409, `${issue.code} только что изменил другой сотрудник. Обновите страницу и повторите.`, "conflict");
 
       const events: Prisma.IssueEventCreateManyInput[] = [];
@@ -134,15 +155,24 @@ export async function decideTheme(user: CurrentUser, input: ThemeDecisionInput) 
     return d;
   });
 
-  for (const { issue } of plans) {
+  const label = STATUS_LABEL[input.status].toLowerCase();
+  if (recipients.size) {
+    await db.notification.createMany({
+      data: [...recipients].map(([userId, issue]) => ({
+        userId,
+        issueId: issue.id,
+        title: `${issue.code}: ${label} — системное решение`,
+        body: `«${title}». ${text}`.slice(0, 500),
+      })),
+    });
+  }
+  const handedOver = plans.filter((p) => owner && owner.id !== p.issue.assigneeId);
+  if (owner && handedOver.length) {
     await notify(
-      [issue.authorId, ...issue.supporters.map((s) => s.userId)],
-      { issueId: issue.id, title: `${issue.code}: ${STATUS_LABEL[input.status].toLowerCase()} — системное решение`, body: `«${title}». ${text}`.slice(0, 500) },
+      [owner.id],
+      { issueId: handedOver[0].issue.id, title: `Вы владелец темы «${title}»`, body: `Обращения: ${handedOver.map((p) => p.issue.code).join(", ")}` },
       { exclude: user.id },
     );
-    if (owner && owner.id !== issue.assigneeId) {
-      await notify([owner.id], { issueId: issue.id, title: `Вы владелец темы «${title}»: ${issue.code}`, body: issue.title }, { exclude: user.id });
-    }
   }
 
   notifyBitrix({

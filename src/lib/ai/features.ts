@@ -48,6 +48,7 @@ export async function loadCorpus(where: Prisma.IssueWhereInput = {}): Promise<Co
       decision: true,
       createdAt: true,
       isAnonymous: true,
+      isPrivate: true,
       category: { select: { name: true } },
       department: { select: { name: true } },
     },
@@ -67,6 +68,7 @@ export async function loadCorpus(where: Prisma.IssueWhereInput = {}): Promise<Co
     supportersCount: r.supportersCount,
     decision: r.decision,
     createdAt: r.createdAt,
+    isPrivate: r.isPrivate,
   }));
 }
 

@@ -139,6 +139,7 @@ export async function listIssues(user: CurrentUser, q: ListQuery) {
 
   if (q.status?.length) and.push({ status: { in: q.status } });
   if (q.type) and.push({ type: q.type });
+  if (q.codes?.length) and.push({ code: { in: q.codes } });
   if (q.categoryId) and.push({ categoryId: q.categoryId });
   // фильтр по подразделению не должен позволять вычислить анонимного автора
   if (q.departmentId) and.push({ departmentId: q.departmentId, isAnonymous: false });

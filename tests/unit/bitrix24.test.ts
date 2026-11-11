@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bitrixConfig, formatBitrixMessage, maskWebhook, postBitrixMessage } from "@/lib/integrations/bitrix24";
+import { bitrixConfig, formatBitrixMessage, maskWebhook, postBitrixMessage, shareableProblems } from "@/lib/integrations/bitrix24";
 
 const HOOK = "https://pulse-demo.bitrix24.ru/rest/1/abcdef1234567890/";
 
@@ -101,5 +101,18 @@ describe("Битрикс24: системное решение и сводка", 
     expect(m).toContain("Быстрых улучшений: 3 · рисков: 2");
     expect(m).toContain("[URL=https://pulse.example.ru/analytics]");
     expect(m.length).toBeLessThanOrEqual(2000);
+  });
+});
+
+describe("Битрикс24: сводка без конфиденциальных обращений", () => {
+  it("проблема только из конфиденциальных не уходит, их коды вырезаются из остальных", () => {
+    const r = shareableProblems(
+      [
+        { title: "Публичная", issueCodes: ["A-002", "A-020"], impact: "high", recommendation: "x" },
+        { title: "Только конфиденциальные", issueCodes: ["A-020"], impact: "medium", recommendation: "y" },
+      ],
+      new Set(["A-020"]),
+    );
+    expect(r).toEqual([{ title: "Публичная", codes: ["A-002"], impact: "high", recommendation: "x" }]);
   });
 });

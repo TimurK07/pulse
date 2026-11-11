@@ -53,10 +53,12 @@ interface Result {
 export function ThemeDecisionDialog({ theme, onClose }: { theme: ThemeRef | null; onClose: () => void }) {
   const qc = useQueryClient();
   const meta = useMeta();
+  // запрашиваем ровно обращения темы — не зависит от размера базы
+  const codesQs = (theme?.codes ?? []).map((c) => `code=${encodeURIComponent(c)}`).join("&");
   const issues = useQuery({
-    queryKey: ["issues", "theme-pick"],
-    queryFn: () => api.get<{ items: IssueListItem[] }>("/api/issues?view=all&limit=200"),
-    enabled: !!theme,
+    queryKey: ["issues", "theme-pick", codesQs],
+    queryFn: () => api.get<{ items: IssueListItem[] }>(`/api/issues?view=all&limit=200&${codesQs}`),
+    enabled: !!theme && codesQs.length > 0,
   });
 
   const [title, setTitle] = useState("");

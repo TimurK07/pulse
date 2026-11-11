@@ -38,7 +38,7 @@ test("автор видит, что обращение решено систем
   await loginAs(page, ACC.employee); // автор A-002 в демо-данных
   await page.goto("/issues/A-002");
   const block = page.getByRole("region", { name: "Системное решение" });
-  await expect(block).toContainText("Решается системно");
+  await expect(block).toContainText("Решено системно");
   await expect(block.getByRole("link", { name: "A-005" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Итог рассмотрения" })).toContainText("лента этапов согласования");
 });

@@ -16,6 +16,7 @@ export const GET = route(async ({ req, user }) => {
     q: sp.get("q") || undefined,
     sort: sp.get("sort") || undefined,
     limit: sp.get("limit") || undefined,
+    codes: sp.getAll("code").length ? sp.getAll("code") : undefined,
   });
   if (isStaff(user.role)) await sweepSla();
   return { items: await listIssues(user, q) };

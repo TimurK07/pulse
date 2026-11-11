@@ -189,7 +189,9 @@ export function IssueView({ code }: { code: string }) {
               <section className="mt-4 flex gap-3 rounded-ctl border border-line px-4 py-3" aria-label="Системное решение">
                 <Layers className="mt-0.5 size-4 shrink-0 text-ink-3" aria-hidden />
                 <div className="min-w-0">
-                  <p className="text-ui font-medium text-ink">Решается системно: «{i.themeDecision.title}»</p>
+                  <p className="text-ui font-medium text-ink">
+                    {i.themeDecision.status === "IMPLEMENTED" ? "Решено системно" : i.themeDecision.status === "REJECTED" ? "Отклонено системно" : "Решается системно"}: «{i.themeDecision.title}»
+                  </p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-1 text-meta text-ink-2">
                     <span>
                       Одно решение на {i.themeDecision.total} {pluralRu(i.themeDecision.total, "обращение", "обращения", "обращений")}
@@ -201,7 +203,7 @@ export function IssueView({ code }: { code: string }) {
                       </Link>
                     ))}
                   </p>
-                  {i.status === "IN_PROGRESS" && <p className="mt-1.5 whitespace-pre-wrap text-meta text-ink">{i.themeDecision.text}</p>}
+                  {i.status === "IN_PROGRESS" && i.themeDecision.status === "IN_PROGRESS" && <p className="mt-1.5 whitespace-pre-wrap text-meta text-ink">{i.themeDecision.text}</p>}
                   <p className="mt-1.5 text-micro text-ink-3">
                     {i.themeDecision.owner ? `Владелец темы: ${i.themeDecision.owner} · ` : ""}решение: {i.themeDecision.decidedBy}, {fmtDate(i.themeDecision.createdAt)}
                   </p>
