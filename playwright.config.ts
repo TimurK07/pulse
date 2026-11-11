@@ -4,6 +4,7 @@ import { defineConfig, devices } from "@playwright/test";
  * E2E работают на production-сборке и отдельной БД pulse_test — рабочая демо-база
  * не затрагивается. Внешний AI в E2E выключен (AI_ENABLED=false): проверяются
  * детерминированные локальные алгоритмы, кредиты Anthropic не тратятся.
+ * Битрикс24 в E2E тоже выключен (BITRIX24_ENABLED=false): тесты не пишут в рабочий чат.
  * Запуск: npm run test:e2e (подхватывает .env.local).
  */
 const PORT = Number(process.env.E2E_PORT ?? 3218);
@@ -31,6 +32,6 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 240_000,
     // NEXT_DIST_DIR: production-сборка для E2E не перезаписывает .next работающего dev-сервера
-    env: { DATABASE_URL: TEST_DB, AI_ENABLED: "false", DEMO_MODE: "true", CRON_SECRET: "e2e-cron-secret-0123456789", NEXT_DIST_DIR: ".next-e2e" },
+    env: { DATABASE_URL: TEST_DB, AI_ENABLED: "false", DEMO_MODE: "true", CRON_SECRET: "e2e-cron-secret-0123456789", NEXT_DIST_DIR: ".next-e2e", BITRIX24_ENABLED: "false" },
   },
 });

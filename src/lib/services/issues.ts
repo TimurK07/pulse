@@ -24,6 +24,7 @@ import { handledCategoryIds, resolveRoute } from "@/lib/routing";
 import { computeDeadlines, type SlaPolicyMap } from "@/lib/sla";
 import type { CreateIssueInput, ListQuery } from "@/lib/validation";
 import { managerIds, notify } from "./notifications";
+import { notifyBitrix, type BitrixEvent } from "@/lib/integrations/bitrix24";
 
 // ───────────────────────── контекст доступа ─────────────────────────
 
@@ -385,6 +386,16 @@ export async function createIssue(user: CurrentUser, input: CreateIssueInput) {
       body: route.note,
     });
   }
+  notifyBitrix({
+    kind: "created",
+    code: issue.code,
+    title: issue.title,
+    type: input.type,
+    category: category.name,
+    assignee: route.assigneeName,
+    backup: route.via === "backup",
+    isPrivate: input.isPrivate,
+  });
   return { code: issue.code, id: issue.id, route };
 }
 
@@ -403,6 +414,7 @@ export async function updateIssue(
   const events: Prisma.IssueEventCreateManyInput[] = [];
   const comments: Prisma.CommentCreateManyInput[] = [];
   const notifications: { ids: (string | null)[]; title: string; body?: string }[] = [];
+  const bitrix: BitrixEvent[] = [];
   let publicAction = false;
 
   if (patch.status && patch.status !== issue.status) {
@@ -428,6 +440,7 @@ export async function updateIssue(
       data.decidedById = user.id;
       data.resolvedAt = now;
       events.push({ issueId: issue.id, actorId: user.id, type: "DECISION", toValue: patch.status, note: text, createdAt: now });
+      bitrix.push({ kind: "decision", code: issue.code, title: issue.title, status: patch.status, text, by: user.name, isPrivate: issue.isPrivate });
       const supporters = await db.supporter.findMany({ where: { issueId: issue.id }, select: { userId: true } });
       notifications.push({
         ids: [issue.authorId, ...supporters.map((s) => s.userId)],
@@ -478,12 +491,14 @@ export async function updateIssue(
     if (patch.assigneeId === null) {
       data.assigneeId = null;
       events.push({ issueId: issue.id, actorId: user.id, type: "ASSIGNED", fromValue: issue.assignee?.name ?? null, toValue: null, createdAt: now });
+      bitrix.push({ kind: "assigned", code: issue.code, title: issue.title, to: null, isPrivate: issue.isPrivate });
     } else {
       const target = await db.user.findUnique({ where: { id: patch.assigneeId } });
       if (!target || !target.isActive || target.role === "EMPLOYEE") throw badRequest("Нельзя назначить этого пользователя");
       data.assigneeId = target.id;
       events.push({ issueId: issue.id, actorId: user.id, type: "ASSIGNED", fromValue: issue.assignee?.name ?? null, toValue: target.name, createdAt: now });
       notifications.push({ ids: [target.id], title: `Вам назначено обращение ${issue.code}`, body: issue.title });
+      bitrix.push({ kind: "assigned", code: issue.code, title: issue.title, to: target.name, isPrivate: issue.isPrivate });
     }
   }
 
@@ -500,6 +515,7 @@ export async function updateIssue(
     if (comments.length) await tx.comment.createMany({ data: comments });
   });
   for (const n of notifications) await notify(n.ids, { issueId: issue.id, title: n.title, body: n.body }, { exclude: user.id });
+  bitrix.forEach(notifyBitrix); // только после успешной записи в БД
   return { ok: true };
 }
 
@@ -550,6 +566,9 @@ export async function addComment(user: CurrentUser, code: string, input: { body:
     },
     { exclude: user.id },
   );
+  if (answeringInfo) {
+    notifyBitrix({ kind: "info_answered", code: issue.code, title: issue.title, assignee: issue.assignee?.name ?? null, isPrivate: issue.isPrivate });
+  }
   return { ok: true, statusChanged: answeringInfo };
 }
 
@@ -599,6 +618,10 @@ export async function sweepSla(force = false) {
   });
   if (!candidates.length) return { escalated: 0 };
   const managers = await managerIds();
+  const assigneeIds = [...new Set(candidates.map((c) => c.assigneeId).filter((x): x is string => !!x))];
+  const assigneeNames = new Map(
+    (await db.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]),
+  );
   let escalated = 0;
   for (const i of candidates) {
     const kinds: { field: "reactionEscalatedAt" | "escalatedAt"; note: string }[] = [];
@@ -610,6 +633,7 @@ export async function sweepSla(force = false) {
       if (claimed.count === 0) continue;
       await db.issueEvent.create({ data: { issueId: i.id, type: "ESCALATED", note: k.note, internal: true, createdAt: now } });
       await notify([i.assigneeId, ...managers], { issueId: i.id, title: `${i.code}: ${k.note.toLowerCase()}`, body: i.title });
+      notifyBitrix({ kind: "escalated", code: i.code, title: i.title, note: k.note, assignee: assigneeNames.get(i.assigneeId ?? "") ?? null, isPrivate: i.isPrivate });
       escalated++;
     }
   }

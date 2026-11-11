@@ -43,6 +43,7 @@ const TABS = [
   ["users", "Пользователи и роли"],
   ["sla", "Сроки"],
   ["ai", "AI"],
+  ["integrations", "Интеграции"],
 ] as const;
 
 export function AdminView() {
@@ -77,6 +78,7 @@ export function AdminView() {
       {q.data && tab === "users" && <Users data={q.data} />}
       {q.data && tab === "sla" && <Sla data={q.data} />}
       {tab === "ai" && <AiSettings />}
+      {tab === "integrations" && <Integrations />}
     </div>
   );
 }
@@ -598,6 +600,119 @@ function Segmented({ value, onChange, options, label, hints }: { value: string; 
           </button>
         </Tip>
       ))}
+    </div>
+  );
+}
+
+interface BitrixStatus {
+  enabled: boolean;
+  problem: string | null;
+  webhookMasked: string | null;
+  dialogId: string | null;
+  publicUrl: string | null;
+  sent: number;
+  failed: number;
+  lastSuccessAt: string | null;
+  lastError: { at: string; reason: string } | null;
+}
+
+const BITRIX_EVENTS = [
+  "Новое обращение — с категорией и ответственным",
+  "Переназначение ответственного",
+  "Просрочка реакции или решения",
+  "Ответ автора на уточнение",
+  "Принятое решение: реализовано, отклонено, закрыто",
+];
+
+function Integrations() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["integrations"], queryFn: () => api.get<{ bitrix24: BitrixStatus }>("/api/admin/integrations"), refetchInterval: 15_000 });
+  const test = useMutation({
+    mutationFn: () => api.post<{ result: { ok: boolean; reason?: string }; bitrix24: BitrixStatus }>("/api/admin/integrations/bitrix24/test"),
+    onSuccess: (d) => {
+      qc.setQueryData(["integrations"], { bitrix24: d.bitrix24 });
+      if (d.result.ok) toast.success("Тестовое сообщение отправлено в чат Битрикс24");
+      else toast.error(d.result.reason ?? "Не удалось отправить сообщение");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  if (q.isLoading) return <div className="p-8"><Skeleton className="h-24 w-full" /></div>;
+  if (q.isError) return <ErrorState message={errorMessage(q.error)} onRetry={() => q.refetch()} />;
+  const b = q.data!.bitrix24;
+  const state = b.enabled ? (b.lastError && (!b.lastSuccessAt || b.lastError.at > b.lastSuccessAt) ? "error" : "on") : "off";
+  return (
+    <div className="max-w-[880px] space-y-8 px-4 pt-6 sm:px-8">
+      <section aria-label="Битрикс24" className="rounded-pop border border-line bg-raised">
+        <header className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-title-md font-semibold">Битрикс24</h2>
+            <p className="text-meta text-ink-3">Уведомления о ключевых событиях PULSE в рабочий чат команды</p>
+          </div>
+          <span
+            className={cn(
+              "inline-flex h-6 items-center rounded-full px-2.5 text-label font-medium",
+              state === "on" ? "bg-ok-soft text-ok" : state === "error" ? "bg-danger-soft text-danger" : "bg-subtle text-ink-2",
+            )}
+          >
+            {state === "on" ? "Подключено" : state === "error" ? "Ошибка отправки" : "Не подключено"}
+          </span>
+          <Button onClick={() => test.mutate()} loading={test.isPending} disabled={!b.enabled}>
+            Отправить тестовое сообщение
+          </Button>
+        </header>
+        <dl className="grid gap-x-6 gap-y-2 px-5 py-4 text-meta sm:grid-cols-[200px_minmax(0,1fr)]">
+          {!b.enabled && (
+            <>
+              <dt className="text-ink-3">Состояние</dt>
+              <dd className="text-ink">{b.problem}</dd>
+            </>
+          )}
+          <dt className="text-ink-3">Вебхук</dt>
+          <dd className="break-all font-mono text-ink">{b.webhookMasked ?? "—"}</dd>
+          <dt className="text-ink-3">Чат</dt>
+          <dd className="font-mono text-ink">{b.dialogId ?? "—"}</dd>
+          <dt className="text-ink-3">Ссылки на обращения</dt>
+          <dd className="text-ink">{b.publicUrl ?? <span className="text-ink-3">PULSE_PUBLIC_URL не задан — сообщения без ссылки</span>}</dd>
+          <dt className="text-ink-3">С момента запуска</dt>
+          <dd className="text-ink">
+            отправлено <span className="mono-num">{b.sent}</span>, ошибок <span className={cn("mono-num", b.failed ? "text-danger" : "")}>{b.failed}</span>
+            {b.lastSuccessAt && <span className="text-ink-3"> · последнее {fmtDateTime(b.lastSuccessAt)}</span>}
+          </dd>
+          {b.lastError && (
+            <>
+              <dt className="text-ink-3">Последняя ошибка</dt>
+              <dd className="text-danger">
+                {b.lastError.reason} <span className="text-ink-3">· {fmtDateTime(b.lastError.at)}</span>
+              </dd>
+            </>
+          )}
+        </dl>
+      </section>
+
+      <section className="grid gap-8 md:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Что отправляется</h3>
+          <ul className="list-disc space-y-1 pl-4 text-meta text-ink-2 marker:text-ink-4">
+            {BITRIX_EVENTS.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-meta text-ink-3">
+            Имена авторов не передаются. У конфиденциальных обращений вместо заголовка и текста решения — только код и ссылка. Если Битрикс24 недоступен, PULSE работает как
+            обычно.
+          </p>
+        </div>
+        <div>
+          <h3 className="mb-2 text-micro font-medium uppercase tracking-[0.08em] text-ink-3">Как подключить</h3>
+          <ol className="list-decimal space-y-1 pl-4 text-meta text-ink-2 marker:text-ink-3">
+            <li>В Битрикс24: «Разработчикам» → «Другое» → «Входящий вебхук», право «Чат и уведомления (im)».</li>
+            <li>Создайте групповой чат и узнайте его ID вида chat123 (из адреса чата).</li>
+            <li>На сервере PULSE задайте BITRIX24_WEBHOOK_URL, BITRIX24_DIALOG_ID и PULSE_PUBLIC_URL, перезапустите.</li>
+            <li>Нажмите «Отправить тестовое сообщение».</li>
+          </ol>
+          <p className="mt-3 text-meta text-ink-3">REST API Битрикс24 доступен на платных тарифах, включая пробный период.</p>
+        </div>
+      </section>
     </div>
   );
 }
