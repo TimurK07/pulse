@@ -1,22 +1,33 @@
 import "server-only";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import { db } from "@/lib/db";
 
-// Файлы хранятся вне public/: выдаются только через /api/attachments/[id] с проверкой прав.
-// В продакшене каталог заменяется объектным хранилищем (S3-совместимым).
-const ROOT = path.join(process.cwd(), "uploads");
+// Файлы выдаются только через /api/attachments/[id] с проверкой прав.
+// Содержимое хранится в PostgreSQL (таблица FileBlob): у serverless-хостинга (Vercel)
+// нет постоянного диска, а VPS не теряет файлы при пересоздании каталога релиза.
+// Файлы, загруженные ранними версиями в каталог uploads/, по-прежнему читаются с диска.
+const LEGACY_ROOT = path.join(process.cwd(), "uploads");
 
-export async function saveFile(buf: Buffer) {
-  await mkdir(ROOT, { recursive: true });
+type Tx = Prisma.TransactionClient;
+
+export async function saveFile(buf: Buffer, tx: Tx = db) {
   const key = randomUUID();
-  await writeFile(path.join(ROOT, key), buf);
+  await tx.fileBlob.create({ data: { key, data: new Uint8Array(buf) } });
   return key;
 }
 
-export async function readStoredFile(key: string) {
-  if (!/^[0-9a-f-]{36}$/.test(key) && !/^seed-[a-z0-9-]+$/.test(key)) throw new Error("bad key");
-  return readFile(path.join(ROOT, key));
+export function validKey(key: string) {
+  return /^[0-9a-f-]{36}$/.test(key) || /^seed-[a-z0-9-]+$/.test(key);
+}
+
+export async function readStoredFile(key: string): Promise<Buffer> {
+  if (!validKey(key)) throw new Error("bad key");
+  const blob = await db.fileBlob.findUnique({ where: { key } });
+  if (blob) return Buffer.from(blob.data);
+  return readFile(path.join(LEGACY_ROOT, key));
 }
 
 /** Проверка сигнатуры файла для бинарных форматов (не доверяем только MIME от браузера) */

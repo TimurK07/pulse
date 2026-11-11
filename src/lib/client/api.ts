@@ -24,7 +24,14 @@ async function parse<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const e = (body as { error?: { message?: string; code?: string; details?: { path: string; message: string }[] } })?.error;
-    throw new ApiClientError(e?.message ?? `Ошибка сервера (${res.status})`, res.status, e?.code, e?.details);
+    // ответ без JSON (например, 413 от хостинга или 502 от прокси) — понятное сообщение по коду
+    const fallback =
+      res.status === 413
+        ? "Файл слишком большой для загрузки"
+        : res.status >= 500
+          ? "Сервер временно недоступен. Повторите попытку."
+          : `Ошибка сервера (${res.status})`;
+    throw new ApiClientError(e?.message ?? fallback, res.status, e?.code, e?.details);
   }
   return body as T;
 }
@@ -60,4 +67,24 @@ export function qs(params: Record<string, string | string[] | undefined | null>)
   }
   const s = sp.toString();
   return s ? `?${s}` : "";
+}
+
+/**
+ * Загрузка вложений по одному файлу на запрос: на serverless-хостинге тело запроса
+ * ограничено (Vercel — 4,5 МБ), и ошибка одного файла не отменяет остальные.
+ */
+export async function uploadFiles(code: string, files: File[]) {
+  const failed: { name: string; message: string }[] = [];
+  let uploaded = 0;
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append("files", f);
+    try {
+      await api.post(`/api/issues/${encodeURIComponent(code)}/attachments`, fd);
+      uploaded++;
+    } catch (e) {
+      failed.push({ name: f.name, message: errorMessage(e) });
+    }
+  }
+  return { uploaded, failed };
 }
