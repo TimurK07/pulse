@@ -58,3 +58,4 @@ uploads/*
 /docs/QA_REPORT.md
 /docs/design-audit/
 /scripts/design-shots.mjs
+.gstack/

@@ -66,7 +66,7 @@ npm run dev
 
 Приложение откроется на http://localhost:3000.
 
-Проверки: `npm test`, `npm run test:integration`, `npm run test:e2e` — всего 141 автотест.
+Проверки: `npm test`, `npm run test:integration`, `npm run test:e2e`.
 
 ## Demo Access
 
@@ -78,6 +78,16 @@ npm run dev
 - Администратор — `admin@pulse.demo`
 
 Демо-данные — 20 синтетических обращений из датасета хакатона. Имена пользователей вымышлены.
+
+## Deployment
+
+PULSE — обычное Next.js-приложение с PostgreSQL: работает на VPS (`npm run build && npm start`) и на Vercel.
+
+- **База.** Миграции: `npm run db:deploy` (переменные берутся из окружения, `.env.local` не обязателен). Демо-данные: `npm run db:seed` — **полностью очищает базу**; если в ней есть пользователи не из демо-набора, seed остановится (принудительно — `SEED_FORCE=1`). Пароль демо-аккаунтов можно задать: `SEED_PASSWORD="…"`.
+- **Serverless (Vercel).** Используйте пул соединений провайдера (Neon, Supabase): в `DATABASE_URL` — адрес пула с `?pgbouncer=true&connection_limit=1`; миграции запускайте по прямому адресу базы. Файлы вложений хранятся в PostgreSQL, отдельное хранилище не нужно. Тело запроса на Vercel ограничено 4,5 МБ — файлы крупнее не загрузятся (на VPS лимит 10 МБ).
+- **Эскалации по расписанию.** `GET /api/cron/sla` с заголовком `Authorization: Bearer $CRON_SECRET` (формат Vercel Cron) или `POST` с `x-cron-secret`. Без планировщика эскалации срабатывают при открытии очереди, пульса и аналитики.
+- **Обратный прокси (nginx).** Передавайте `Host` (`proxy_set_header Host $host;`) или задайте `PULSE_PUBLIC_URL` — иначе защита от CSRF отклонит изменения. `TRUST_PROXY=true` — только если прокси выставляет `X-Forwarded-For`. Нужен HTTPS: cookie сессии в production помечена `Secure`.
+- **Публичный стенд.** `DEMO_MODE=true` показывает быстрый вход и пароль демо-аккаунтов, включая администратора. Для стенда, доступного не только жюри, — `DEMO_MODE=false` и свой `SEED_PASSWORD`.
 
 ## Documentation
 

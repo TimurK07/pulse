@@ -2,22 +2,25 @@
   "name": "pulse",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
-    "db:migrate": "node --env-file=.env.local node_modules/prisma/build/index.js migrate dev",
-    "db:deploy": "node --env-file=.env.local node_modules/prisma/build/index.js migrate deploy",
-    "db:seed": "node --env-file=.env.local node_modules/tsx/dist/cli.mjs prisma/seed.ts",
-    "db:reset": "node --env-file=.env.local node_modules/prisma/build/index.js migrate reset --force",
-    "db:studio": "node --env-file=.env.local node_modules/prisma/build/index.js studio",
+    "typecheck": "next typegen && tsc --noEmit",
+    "db:migrate": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate dev",
+    "db:deploy": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate deploy",
+    "db:seed": "node --env-file-if-exists=.env.local node_modules/tsx/dist/cli.mjs prisma/seed.ts",
+    "db:reset": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate reset --force",
+    "db:studio": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js studio",
     "setup": "npm run db:deploy && npm run db:seed",
     "test": "vitest run",
-    "test:e2e": "node --env-file=.env.local node_modules/@playwright/test/cli.js test",
+    "test:e2e": "node --env-file-if-exists=.env.local node_modules/@playwright/test/cli.js test",
     "postinstall": "prisma generate",
-    "test:integration": "node --env-file=.env.local scripts/prepare-test-db.mjs && vitest run --config vitest.integration.mts"
+    "test:integration": "node --env-file-if-exists=.env.local scripts/prepare-test-db.mjs && vitest run --config vitest.integration.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.7.0",
