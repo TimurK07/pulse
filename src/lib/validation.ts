@@ -5,10 +5,14 @@ import { LIMITS } from "./domain";
 // Сообщения валидации по умолчанию — на русском
 z.config(z.locales.ru());
 
+// PostgreSQL не принимает символ 0x00 в тексте: без очистки запрос падал бы с 500
+const noNul = (s: string) => s.replace(/\u0000/g, "");
+const CODE_RE = /^[A-Z]-\d{3,}$/;
+
 const trimmed = (min: number, max: number, label: string) =>
   z
     .string({ error: `${label}: обязательное поле` })
-    .transform((s) => s.replace(/\u0000/g, "").trim())
+    .transform((s) => noNul(s).trim())
     .pipe(
       z
         .string()
@@ -29,11 +33,11 @@ export const createIssueSchema = z.object({
     .string()
     .max(LIMITS.solutionMax)
     .optional()
-    .transform((s) => (s?.trim() ? s.trim() : undefined)),
+    .transform((s) => (s && noNul(s).trim() ? noNul(s).trim() : undefined)),
   isAnonymous: z.boolean().default(false),
   isPrivate: z.boolean().default(false),
   /** код обращения, которое автор видел как похожее, но решил подать своё */
-  acknowledgedSimilar: z.array(z.string()).max(10).optional(),
+  acknowledgedSimilar: z.array(z.string().regex(CODE_RE, "Некорректный код обращения")).max(10).optional(),
 });
 export type CreateIssueInput = z.infer<typeof createIssueSchema>;
 
@@ -41,7 +45,7 @@ export const updateIssueSchema = z
   .object({
     status: statusSchema.optional(),
     /** текст, обязательный для некоторых переходов (вопрос, решение, отказ) */
-    text: z.string().max(LIMITS.commentMax).optional(),
+    text: z.string().max(LIMITS.commentMax).transform(noNul).optional(),
     priority: prioritySchema.optional(),
     assigneeId: z.string().nullable().optional(),
     categoryId: z.string().optional(),
@@ -68,20 +72,20 @@ export const listQuerySchema = z.object({
   sort: z.enum(["created_desc", "created_asc", "deadline", "priority", "supporters"]).default("created_desc"),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   /** точный набор обращений по кодам (диалог системного решения) */
-  codes: z.array(z.string().regex(/^[A-Z]-\d{3,}$/)).max(50).optional(),
+  codes: z.array(z.string().regex(CODE_RE)).max(50).optional(),
 });
 export type ListQuery = z.infer<typeof listQuerySchema>;
 
 export const aiTextSchema = z.object({
-  title: z.string().max(LIMITS.titleMax).optional().default(""),
-  description: z.string().max(LIMITS.descriptionMax).default(""),
+  title: z.string().max(LIMITS.titleMax).transform(noNul).optional().default(""),
+  description: z.string().max(LIMITS.descriptionMax).transform(noNul).default(""),
   type: issueTypeSchema.optional(),
 });
 
 export const themeDecisionSchema = z.object({
   title: trimmed(3, 160, "Название темы"),
-  codes: z.array(z.string().regex(/^[A-Z]-\d{3,}$/, "Некорректный код обращения")).min(1, "Выберите хотя бы одно обращение").max(30),
+  codes: z.array(z.string().regex(CODE_RE, "Некорректный код обращения")).min(1, "Выберите хотя бы одно обращение").max(30),
   status: z.enum(["IN_PROGRESS", "IMPLEMENTED", "REJECTED"]),
-  text: z.string().max(LIMITS.commentMax),
+  text: z.string().max(LIMITS.commentMax).transform(noNul),
   ownerId: z.string().nullable().optional(),
 });

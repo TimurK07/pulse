@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { OPEN_STATUSES, RESOLVED_STATUSES, STATUS_ORDER, type IssueStatus, type IssueType } from "@/lib/domain";
 import { loadCorpus } from "@/lib/ai/features";
 import { localThemes } from "@/lib/ai/local";
+import { isOverdue } from "@/lib/sla";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -67,12 +68,16 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
   const open = issues.filter((i) => OPEN_STATUSES.includes(i.status));
   const responded = issues.filter((i) => i.firstResponseAt);
   const resolvedWithDecision = issues.filter((i) => RESOLVED_STATUSES.includes(i.status) && i.decision);
-  const overdue = open.filter((i) => i.dueAt < now || (!i.firstResponseAt && i.firstResponseDueAt < now));
+  const overdue = new Set(open.filter((i) => isOverdue(i, now)));
   const responseHours = responded.map((i) => (i.firstResponseAt!.getTime() - i.createdAt.getTime()) / HOUR);
   const avgFirstResponseHours = responseHours.length ? responseHours.reduce((a, b) => a + b, 0) / responseHours.length : null;
   const sortedRH = [...responseHours].sort((a, b) => a - b);
-  const medianFirstResponseHours = sortedRH.length ? sortedRH[Math.floor(sortedRH.length / 2)] : null;
+  const mid = Math.floor(sortedRH.length / 2);
+  const medianFirstResponseHours = sortedRH.length ? (sortedRH.length % 2 ? sortedRH[mid] : (sortedRH[mid - 1] + sortedRH[mid]) / 2) : null;
   const onTime = responded.filter((i) => i.firstResponseAt! <= i.firstResponseDueAt).length;
+  // «в срок» считается и по обращениям, которые так и не получили реакцию после истечения норматива
+  const missedReaction = issues.filter((i) => !i.firstResponseAt && i.firstResponseDueAt < now).length;
+  const reactionBase = responded.length + missedReaction;
   const resolutionDays = issues
     .filter((i) => i.resolvedAt)
     .map((i) => (i.resolvedAt!.getTime() - i.createdAt.getTime()) / DAY);
@@ -89,7 +94,7 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
       row.total++;
       if (OPEN_STATUSES.includes(i.status)) row.open++;
       if (RESOLVED_STATUSES.includes(i.status)) row.resolved++;
-      if (overdue.includes(i)) row.overdue++;
+      if (overdue.has(i)) row.overdue++;
       m.set(g.id, row);
     }
     return [...m.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "ru"));
@@ -105,7 +110,7 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
       const r = m.get(i.assignee.id) ?? { ...i.assignee, open: 0, overdue: 0, resolved: 0, responseHours: [] };
       if (OPEN_STATUSES.includes(i.status)) r.open++;
       if (RESOLVED_STATUSES.includes(i.status)) r.resolved++;
-      if (overdue.includes(i)) r.overdue++;
+      if (overdue.has(i)) r.overdue++;
       if (i.firstResponseAt) r.responseHours.push((i.firstResponseAt.getTime() - i.createdAt.getTime()) / HOUR);
       m.set(i.assignee.id, r);
     }
@@ -114,10 +119,11 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
       .sort((a, b) => b.overdue - a.overdue || b.open - a.open);
   })();
 
-  // Поток: поступило / решено по неделям (последние 10 недель)
+  // Поток: поступило / решено по неделям (последние 10 недель, но не шире выбранного периода)
   const weeks: { week: string; created: number; resolved: number }[] = [];
-  const start = weekStart(new Date(now.getTime() - 9 * 7 * DAY));
-  for (let w = 0; w < 10; w++) {
+  const nWeeks = f.periodDays ? Math.min(10, Math.max(1, Math.ceil(f.periodDays / 7))) : 10;
+  const start = weekStart(new Date(now.getTime() - (nWeeks - 1) * 7 * DAY));
+  for (let w = 0; w < nWeeks; w++) {
     const from = new Date(start.getTime() + w * 7 * DAY);
     const to = new Date(from.getTime() + 7 * DAY);
     weeks.push({
@@ -140,9 +146,10 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
     }));
 
   const corpus = await loadCorpus({ id: { in: issues.map((i) => i.id) } });
+  const statusById = new Map(issues.map((i) => [i.id, i.status]));
   const themes = localThemes(corpus).map((t) => ({
     ...t,
-    statuses: t.issueIds.map((id) => issues.find((i) => i.id === id)?.status),
+    statuses: t.issueIds.map((id) => statusById.get(id)),
   }));
 
   return {
@@ -151,7 +158,7 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
     totals: {
       total,
       open: open.length,
-      overdue: overdue.length,
+      overdue: overdue.size,
       reactionOverdue: open.filter((i) => !i.firstResponseAt && i.firstResponseDueAt < now).length,
       responded: responded.length,
       respondedShare: total ? responded.length / total : 0,
@@ -162,7 +169,7 @@ export async function computeAnalytics(f: AnalyticsFilters = {}, scope: Prisma.I
       rejected: issues.filter((i) => i.status === "REJECTED").length,
       avgFirstResponseHours,
       medianFirstResponseHours,
-      firstResponseOnTimeShare: responded.length ? onTime / responded.length : null,
+      firstResponseOnTimeShare: reactionBase ? onTime / reactionBase : null,
       avgResolutionDays: resolutionDays.length ? resolutionDays.reduce((a, b) => a + b, 0) / resolutionDays.length : null,
       supporters: issues.reduce((s, i) => s + i.supportersCount, 0),
     },

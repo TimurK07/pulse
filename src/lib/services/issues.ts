@@ -21,7 +21,7 @@ import {
   type IssueAccess,
 } from "@/lib/permissions";
 import { handledCategoryIds, resolveRoute } from "@/lib/routing";
-import { computeDeadlines, type SlaPolicyMap } from "@/lib/sla";
+import { computeDeadlines, isOverdue, resumeAfterPause, type SlaPolicyMap } from "@/lib/sla";
 import type { CreateIssueInput, ListQuery } from "@/lib/validation";
 import { managerIds, notify } from "./notifications";
 import { notifyBitrix, type BitrixEvent } from "@/lib/integrations/bitrix24";
@@ -60,25 +60,48 @@ export async function slaPolicy(): Promise<SlaPolicyMap> {
   return map;
 }
 
+// Срок решения не считается просроченным, пока обращение ждёт ответа автора (пауза)
 const overdueWhere = (now: Date): Prisma.IssueWhereInput => ({
   status: { in: OPEN_STATUSES },
-  OR: [{ dueAt: { lt: now } }, { firstResponseAt: null, firstResponseDueAt: { lt: now } }],
+  OR: [{ dueAt: { lt: now }, status: { not: "NEEDS_INFO" } }, { firstResponseAt: null, firstResponseDueAt: { lt: now } }],
 });
 
 // ───────────────────────── список ─────────────────────────
 
-const listInclude = {
+// только поля для списка: без описаний и кэша AI-разбора
+const listSelect = {
+  id: true,
+  code: true,
+  type: true,
+  title: true,
+  status: true,
+  priority: true,
+  authorId: true,
+  isAnonymous: true,
+  createdAt: true,
+  updatedAt: true,
+  firstResponseDueAt: true,
+  firstResponseAt: true,
+  dueAt: true,
+  pausedAt: true,
+  resolvedAt: true,
+  supportersCount: true,
   category: { select: { id: true, name: true } },
   department: { select: { id: true, name: true } },
   assignee: { select: { id: true, name: true, title: true } },
   author: { select: { id: true, name: true, title: true } },
   _count: { select: { comments: true, attachments: true } },
-} satisfies Prisma.IssueInclude;
+} satisfies Prisma.IssueSelect;
 
-type ListRow = Prisma.IssueGetPayload<{ include: typeof listInclude }>;
+type ListRow = Prisma.IssueGetPayload<{ select: typeof listSelect }>;
 
-export function serializeListItem(i: ListRow, viewer: CurrentUser) {
+/**
+ * @param publicOnly — обращение коллеги, которое пользователь поддержал: как и в карточке
+ *   (доступ «public»), автор и его подразделение не показываются.
+ */
+export function serializeListItem(i: ListRow, viewer: CurrentUser, publicOnly = false) {
   const own = i.authorId === viewer.id;
+  const showAuthor = own || (!publicOnly && !i.isAnonymous);
   return {
     id: i.id,
     code: i.code,
@@ -88,9 +111,9 @@ export function serializeListItem(i: ListRow, viewer: CurrentUser) {
     priority: i.priority,
     category: i.category,
     assignee: i.assignee,
-    author: own || !i.isAnonymous ? { id: i.author.id, name: i.author.name, title: i.author.title } : null,
+    author: showAuthor ? { id: i.author.id, name: i.author.name, title: i.author.title } : null,
     // подразделение анонимного автора раскрывает его так же, как имя
-    department: own || !i.isAnonymous ? i.department : null,
+    department: showAuthor ? i.department : null,
     isAnonymous: i.isAnonymous,
     isOwn: own,
     createdAt: i.createdAt.toISOString(),
@@ -98,6 +121,7 @@ export function serializeListItem(i: ListRow, viewer: CurrentUser) {
     firstResponseDueAt: i.firstResponseDueAt.toISOString(),
     firstResponseAt: i.firstResponseAt?.toISOString() ?? null,
     dueAt: i.dueAt.toISOString(),
+    pausedAt: i.pausedAt?.toISOString() ?? null,
     resolvedAt: i.resolvedAt?.toISOString() ?? null,
     supportersCount: i.supportersCount,
     commentsCount: i._count.comments,
@@ -169,9 +193,9 @@ export async function listIssues(user: CurrentUser, q: ListQuery) {
             ? [{ supportersCount: "desc" }, { createdAt: "desc" }]
             : [{ createdAt: "desc" }];
 
-  const rows = await db.issue.findMany({ where: { AND: and }, include: listInclude, orderBy, take: q.limit });
+  const rows = await db.issue.findMany({ where: { AND: and }, select: listSelect, orderBy, take: q.limit });
   // Prisma сортирует enum по порядку объявления (LOW < MEDIUM < HIGH) — для priority desc это и нужно.
-  return rows.map((r) => serializeListItem(r, user));
+  return rows.map((r) => serializeListItem(r, user, q.view === "supported"));
 }
 
 /** Счётчики для бокового меню */
@@ -294,6 +318,7 @@ function serializeDetail(i: DetailRow, user: CurrentUser, access: IssueAccess, i
     firstResponseDueAt: i.firstResponseDueAt.toISOString(),
     firstResponseAt: i.firstResponseAt?.toISOString() ?? null,
     dueAt: i.dueAt.toISOString(),
+    pausedAt: i.pausedAt?.toISOString() ?? null,
     resolvedAt: i.resolvedAt?.toISOString() ?? null,
     decision: i.decision,
     decisionAt: i.decisionAt?.toISOString() ?? null,
@@ -328,7 +353,7 @@ export async function createIssue(user: CurrentUser, input: CreateIssueInput) {
   if (!category || !category.isActive) throw badRequest("Категория не найдена или отключена");
 
   const priority: Priority = "MEDIUM"; // приоритет уточняет обработчик; AI может подсказать
-  const route = await resolveRoute({ categoryId: category.id, type: input.type, authorDepartmentId: user.departmentId, isAnonymous: input.isAnonymous });
+  const route = await resolveRoute({ categoryId: category.id, type: input.type, authorId: user.id, authorDepartmentId: user.departmentId, isAnonymous: input.isAnonymous });
   const now = new Date();
   const deadlines = computeDeadlines(now, priority, await slaPolicy());
 
@@ -377,17 +402,15 @@ export async function createIssue(user: CurrentUser, input: CreateIssueInput) {
     return { ...created, code };
   });
 
-  await notify([route.assigneeId], {
-    issueId: issue.id,
-    title: `Новое обращение ${issue.code} назначено вам`,
-    body: issue.title,
-  });
+  await notify(
+    [route.assigneeId],
+    { issueId: issue.id, title: `Новое обращение ${issue.code} назначено вам`, body: issue.title },
+    { exclude: user.id },
+  );
   if (route.via === "manager_queue" || route.via === "unassigned") {
-    await notify(await managerIds(), {
-      issueId: issue.id,
-      title: `${issue.code}: нет доступного ответственного`,
-      body: route.note,
-    });
+    // руководитель, которому обращение уже назначено, получил уведомление выше
+    const others = (await managerIds()).filter((id) => id !== route.assigneeId);
+    await notify(others, { issueId: issue.id, title: `${issue.code}: нет доступного ответственного`, body: route.note }, { exclude: user.id });
   }
   notifyBitrix({
     kind: "created",
@@ -419,45 +442,78 @@ export async function updateIssue(
   const notifications: { ids: (string | null)[]; title: string; body?: string }[] = [];
   const bitrix: BitrixEvent[] = [];
   let publicAction = false;
+  const statusChange = !!patch.status && patch.status !== issue.status;
+  const reopening = statusChange && RESOLVED_STATUSES.includes(issue.status) && !RESOLVED_STATUSES.includes(patch.status!);
+  // Срок решения, с которым работаем дальше в этом запросе (пауза, переоткрытие, приоритет)
+  let dueAt = issue.dueAt;
+  const setDue = (next: Date, why: string) => {
+    if (next.getTime() === dueAt.getTime()) return;
+    events.push({ issueId: issue.id, actorId: user.id, type: "DUE_CHANGED", fromValue: dueAt.toISOString(), toValue: next.toISOString(), note: why, internal: true, createdAt: now });
+    dueAt = next;
+    data.dueAt = next;
+    if (next > now) data.escalatedAt = null; // новый срок ещё не истёк — следующая просрочка снова эскалируется
+  };
 
-  if (patch.status && patch.status !== issue.status) {
+  // Закрытое обращение не редактируется: сначала его нужно переоткрыть
+  const editsFields = patch.priority !== undefined || patch.assigneeId !== undefined || patch.categoryId !== undefined || patch.dueAt !== undefined;
+  if (RESOLVED_STATUSES.includes(issue.status) && editsFields && !reopening) {
+    throw badRequest("Обращение закрыто. Чтобы изменить его, сначала переоткройте.");
+  }
+
+  if (statusChange) {
+    const to = patch.status!;
     const allowed = allowedTransitions(issue.status, issue.type);
-    if (!allowed.includes(patch.status)) {
-      throw badRequest(`Нельзя перевести из «${STATUS_LABEL[issue.status]}» в «${STATUS_LABEL[patch.status]}»`);
+    if (!allowed.includes(to)) {
+      throw badRequest(`Нельзя перевести из «${STATUS_LABEL[issue.status]}» в «${STATUS_LABEL[to]}»`);
     }
-    const req = STATUS_REQUIRES_TEXT[patch.status];
+    const req = STATUS_REQUIRES_TEXT[to];
     const text = patch.text?.trim() ?? "";
     if (req && text.length < req.min) {
       throw badRequest(`${req.label}: минимум ${req.min} символов`, [{ path: "text", message: `минимум ${req.min} символов` }]);
     }
-    data.status = patch.status;
+    data.status = to;
     publicAction = true;
-    events.push({ issueId: issue.id, actorId: user.id, type: "STATUS_CHANGED", fromValue: issue.status, toValue: patch.status, createdAt: now });
+    events.push({ issueId: issue.id, actorId: user.id, type: "STATUS_CHANGED", fromValue: issue.status, toValue: to, createdAt: now });
 
-    if (patch.status === "NEEDS_INFO") {
+    // пауза срока решения на время ожидания ответа автора
+    if (to === "NEEDS_INFO") data.pausedAt = now;
+    else if (issue.status === "NEEDS_INFO") {
+      data.pausedAt = null;
+      if (!RESOLVED_STATUSES.includes(to)) setDue(resumeAfterPause(issue.dueAt, issue.pausedAt, now), "Срок продлён на время ожидания ответа автора");
+    }
+
+    if (to === "NEEDS_INFO") {
       comments.push({ issueId: issue.id, authorId: user.id, kind: "INFO_REQUEST", body: text, createdAt: now });
       notifications.push({ ids: [issue.authorId], title: `${issue.code}: нужен ваш ответ`, body: text });
-    } else if (RESOLVED_STATUSES.includes(patch.status)) {
+    } else if (RESOLVED_STATUSES.includes(to)) {
       data.decision = text;
       data.decisionAt = now;
       data.decidedById = user.id;
       data.resolvedAt = now;
-      events.push({ issueId: issue.id, actorId: user.id, type: "DECISION", toValue: patch.status, note: text, createdAt: now });
-      bitrix.push({ kind: "decision", code: issue.code, title: issue.title, status: patch.status, text, by: user.name, isPrivate: issue.isPrivate });
+      events.push({ issueId: issue.id, actorId: user.id, type: "DECISION", toValue: to, note: text, createdAt: now });
+      bitrix.push({ kind: "decision", code: issue.code, title: issue.title, status: to, text, by: user.name, isPrivate: issue.isPrivate });
       const supporters = await db.supporter.findMany({ where: { issueId: issue.id }, select: { userId: true } });
       notifications.push({
         ids: [issue.authorId, ...supporters.map((s) => s.userId)],
-        title: `${issue.code}: ${STATUS_LABEL[patch.status].toLowerCase()}`,
+        title: `${issue.code}: ${STATUS_LABEL[to].toLowerCase()}`,
         body: text,
       });
     } else {
-      if (RESOLVED_STATUSES.includes(issue.status)) {
-        data.resolvedAt = null; // переоткрытие; прежнее решение остаётся в истории
-        data.escalatedAt = null;
+      if (reopening) {
+        // Переоткрытие: прежнее решение остаётся в истории (событие DECISION), но больше не действует.
+        // Срок решения отсчитывается заново, иначе обращение сразу оказалось бы просроченным.
+        data.resolvedAt = null;
+        data.decision = null;
+        data.decisionAt = null;
+        data.decidedById = null;
+        data.themeDecisionId = null;
         data.reactionEscalatedAt = null;
+        const policy = await slaPolicy();
+        setDue(computeDeadlines(now, patch.priority ?? issue.priority, policy).dueAt, "Обращение переоткрыто — срок решения отсчитывается заново");
+        data.escalatedAt = null;
       }
       if (text) comments.push({ issueId: issue.id, authorId: user.id, kind: "COMMENT", body: text, createdAt: now });
-      notifications.push({ ids: [issue.authorId], title: `${issue.code}: статус «${STATUS_LABEL[patch.status]}»`, body: text || issue.title });
+      notifications.push({ ids: [issue.authorId], title: `${issue.code}: статус «${STATUS_LABEL[to]}»`, body: text || issue.title });
     }
   } else if (patch.text?.trim()) {
     throw badRequest("Текст без смены статуса отправляйте комментарием");
@@ -466,10 +522,18 @@ export async function updateIssue(
   if (patch.priority && patch.priority !== issue.priority) {
     data.priority = patch.priority;
     events.push({ issueId: issue.id, actorId: user.id, type: "PRIORITY_CHANGED", fromValue: issue.priority, toValue: patch.priority, internal: true, createdAt: now });
-    // Сроки пересчитываются от даты подачи, если их не меняли вручную
-    const d = computeDeadlines(issue.createdAt, patch.priority, await slaPolicy());
-    if (!issue.firstResponseAt) data.firstResponseDueAt = d.firstResponseDueAt;
-    if (!patch.dueAt) data.dueAt = d.dueAt;
+    // Сроки пересчитываются от даты подачи. Ответственный может только сократить срок
+    // (повысив приоритет), но не отодвинуть свою просрочку, понизив его — это решает руководитель.
+    if (!reopening && !patch.dueAt) {
+      const d = computeDeadlines(issue.createdAt, patch.priority, await slaPolicy());
+      const manager = isManagerial(user.role);
+      if (!issue.firstResponseAt && (manager || d.firstResponseDueAt < issue.firstResponseDueAt)) {
+        data.firstResponseDueAt = d.firstResponseDueAt;
+        if (d.firstResponseDueAt > now) data.reactionEscalatedAt = null;
+      }
+      // на паузе срок решения не трогаем: он будет перенесён при возврате к работе
+      if (issue.status !== "NEEDS_INFO" && (manager || d.dueAt < dueAt)) setDue(d.dueAt, "Пересчитан по приоритету");
+    }
   }
 
   if (patch.dueAt) {
@@ -477,9 +541,12 @@ export async function updateIssue(
     if (!isManagerial(user.role)) throw forbidden("Срок решения может изменить только руководитель");
     const due = new Date(patch.dueAt);
     if (due.getTime() < issue.createdAt.getTime()) throw badRequest("Срок не может быть раньше даты подачи");
-    data.dueAt = due;
-    data.escalatedAt = null;
-    events.push({ issueId: issue.id, actorId: user.id, type: "DUE_CHANGED", fromValue: issue.dueAt.toISOString(), toValue: due.toISOString(), createdAt: now });
+    if (due.getTime() !== dueAt.getTime()) {
+      events.push({ issueId: issue.id, actorId: user.id, type: "DUE_CHANGED", fromValue: dueAt.toISOString(), toValue: due.toISOString(), createdAt: now });
+      dueAt = due;
+      data.dueAt = due;
+      data.escalatedAt = null;
+    }
   }
 
   if (patch.categoryId && patch.categoryId !== issue.categoryId) {
@@ -510,9 +577,10 @@ export async function updateIssue(
   if (!events.length) return { ok: true, unchanged: true };
   data.updatedAt = now;
 
-  // Оптимистичная блокировка: если статус успели изменить параллельно — 409, а не тихая перезапись
+  // Оптимистичная блокировка: если обращение успели изменить параллельно (статус, ответственный,
+  // срок, ответ автора) — 409, а не тихая перезапись поверх устаревших данных
   await db.$transaction(async (tx) => {
-    const r = await tx.issue.updateMany({ where: { id: issue.id, ...(patch.status ? { status: issue.status } : {}) }, data });
+    const r = await tx.issue.updateMany({ where: { id: issue.id, status: issue.status, updatedAt: issue.updatedAt }, data });
     if (r.count === 0) throw new ApiError(409, "Обращение только что изменил другой сотрудник. Обновите страницу и повторите.", "conflict");
     await tx.issueEvent.createMany({ data: events });
     if (comments.length) await tx.comment.createMany({ data: comments });
@@ -533,8 +601,8 @@ export async function addComment(user: CurrentUser, code: string, input: { body:
     await db.$transaction([
       db.comment.create({ data: { issueId: issue.id, authorId: user.id, kind: input.kind, body: input.body, createdAt: now } }),
       ...(input.kind === "COMMENT" && !issue.firstResponseAt
-        ? [db.issue.update({ where: { id: issue.id }, data: { firstResponseAt: now } })]
-        : [db.issue.update({ where: { id: issue.id }, data: { updatedAt: now } })]),
+        ? [db.issue.updateMany({ where: { id: issue.id, firstResponseAt: null }, data: { firstResponseAt: now } })]
+        : []),
     ]);
     if (input.kind === "COMMENT") {
       await notify([issue.authorId], { issueId: issue.id, title: `${issue.code}: новый ответ`, body: input.body.slice(0, 200) }, { exclude: user.id });
@@ -546,33 +614,51 @@ export async function addComment(user: CurrentUser, code: string, input: { body:
   if (input.kind === "INTERNAL") throw forbidden("Внутренние заметки доступны только обработчикам");
   if (RESOLVED_STATUSES.includes(issue.status)) throw badRequest("Обращение закрыто. Если вопрос остался — создайте новое обращение.");
 
-  const answeringInfo = issue.status === "NEEDS_INFO";
-  await db.$transaction([
-    db.comment.create({
-      data: { issueId: issue.id, authorId: user.id, kind: answeringInfo ? "INFO_RESPONSE" : "COMMENT", body: input.body, createdAt: now },
-    }),
-    ...(answeringInfo
-      ? [
-          db.issue.update({ where: { id: issue.id }, data: { status: "IN_REVIEW" } }),
-          db.issueEvent.create({
-            data: { issueId: issue.id, actorId: user.id, type: "STATUS_CHANGED", fromValue: "NEEDS_INFO", toValue: "IN_REVIEW", note: "Автор ответил на уточнение", createdAt: now },
-          }),
-        ]
-      : [db.issue.update({ where: { id: issue.id }, data: { updatedAt: now } })]),
-  ]);
-  await notify(
-    [issue.assigneeId],
-    {
-      issueId: issue.id,
-      title: answeringInfo ? `${issue.code}: автор ответил на уточнение` : `${issue.code}: комментарий автора`,
-      body: input.body.slice(0, 200),
-    },
-    { exclude: user.id },
-  );
-  if (answeringInfo) {
+  // Ответ на уточнение возвращает обращение в работу. Статус проверяется в момент записи:
+  // если его параллельно изменил ответственный (или ответ отправлен дважды), сохраняется обычный комментарий.
+  const answered = await db.$transaction(async (tx) => {
+    let answering = false;
+    if (issue.status === "NEEDS_INFO") {
+      const back = await returnStatusAfterInfo(tx, issue.id);
+      const r = await tx.issue.updateMany({
+        where: { id: issue.id, status: "NEEDS_INFO" },
+        data: { status: back, pausedAt: null, dueAt: resumeAfterPause(issue.dueAt, issue.pausedAt, now), updatedAt: now },
+      });
+      answering = r.count === 1;
+      if (answering) {
+        await tx.issueEvent.create({
+          data: { issueId: issue.id, actorId: user.id, type: "STATUS_CHANGED", fromValue: "NEEDS_INFO", toValue: back, note: "Автор ответил на уточнение", createdAt: now },
+        });
+      }
+    }
+    if (!answering) {
+      const fresh = await tx.issue.findUnique({ where: { id: issue.id }, select: { status: true } });
+      if (!fresh || RESOLVED_STATUSES.includes(fresh.status)) throw badRequest("Обращение уже закрыто. Если вопрос остался — создайте новое обращение.");
+    }
+    await tx.comment.create({
+      data: { issueId: issue.id, authorId: user.id, kind: answering ? "INFO_RESPONSE" : "COMMENT", body: input.body, createdAt: now },
+    });
+    return answering;
+  });
+
+  const title = answered ? `${issue.code}: автор ответил на уточнение` : `${issue.code}: комментарий автора`;
+  // без ответственного об ответе узнают руководители — иначе ответ никто не увидит
+  const to = issue.assigneeId ? [issue.assigneeId] : answered ? await managerIds() : [];
+  await notify(to, { issueId: issue.id, title, body: input.body.slice(0, 200) }, { exclude: user.id });
+  if (answered) {
     notifyBitrix({ kind: "info_answered", code: issue.code, title: issue.title, assignee: issue.assignee?.name ?? null, isPrivate: issue.isPrivate });
   }
-  return { ok: true, statusChanged: answeringInfo };
+  return { ok: true, statusChanged: answered };
+}
+
+/** Куда вернуть обращение после ответа автора: в статус, из которого запросили уточнение */
+async function returnStatusAfterInfo(tx: Prisma.TransactionClient, issueId: string): Promise<IssueStatus> {
+  const ev = await tx.issueEvent.findFirst({
+    where: { issueId, type: "STATUS_CHANGED", toValue: "NEEDS_INFO" },
+    orderBy: { createdAt: "desc" },
+    select: { fromValue: true },
+  });
+  return ev?.fromValue === "IN_PROGRESS" ? "IN_PROGRESS" : "IN_REVIEW";
 }
 
 // ───────────────────────── поддержка ─────────────────────────
@@ -580,12 +666,16 @@ export async function addComment(user: CurrentUser, code: string, input: { body:
 export async function toggleSupport(user: CurrentUser, code: string) {
   const issue = await db.issue.findUnique({ where: { code } });
   if (!issue || issue.isPrivate) throw notFound("Обращение");
+  // поддержка — голос сотрудника «у меня то же самое»; обработчики работают с обращением напрямую
+  if (user.role !== "EMPLOYEE") throw forbidden("Поддерживать обращения могут сотрудники");
   if (issue.authorId === user.id) throw badRequest("Нельзя поддержать собственное обращение");
   const existing = await db.supporter.findUnique({ where: { issueId_userId: { issueId: issue.id, userId: user.id } } });
   if (existing) {
     await db.$transaction([
       db.supporter.delete({ where: { issueId_userId: { issueId: issue.id, userId: user.id } } }),
       db.issue.update({ where: { id: issue.id }, data: { supportersCount: { decrement: 1 } } }),
+      // повторные «поддержать/отменить» не засоряют историю обращения
+      db.issueEvent.deleteMany({ where: { issueId: issue.id, actorId: user.id, type: "SUPPORTED" } }),
     ]);
     return { supported: false };
   }
@@ -615,9 +705,26 @@ export async function sweepSla(force = false) {
       status: { in: OPEN_STATUSES },
       OR: [
         { firstResponseAt: null, firstResponseDueAt: { lt: now }, reactionEscalatedAt: null },
-        { dueAt: { lt: now }, escalatedAt: null },
+        // на паузе (ждём ответа автора) срок решения не идёт
+        { dueAt: { lt: now }, escalatedAt: null, status: { not: "NEEDS_INFO" } },
       ],
     },
+    select: {
+      id: true,
+      code: true,
+      title: true,
+      status: true,
+      assigneeId: true,
+      isPrivate: true,
+      firstResponseAt: true,
+      firstResponseDueAt: true,
+      reactionEscalatedAt: true,
+      dueAt: true,
+      escalatedAt: true,
+    },
+    orderBy: { dueAt: "asc" },
+    // ограничение на один проход: остаток обработает следующий запуск, запрос пользователя не «зависает»
+    take: 100,
   });
   if (!candidates.length) return { escalated: 0 };
   const managers = await managerIds();
@@ -629,12 +736,17 @@ export async function sweepSla(force = false) {
   for (const i of candidates) {
     const kinds: { field: "reactionEscalatedAt" | "escalatedAt"; note: string }[] = [];
     if (!i.firstResponseAt && i.firstResponseDueAt < now && !i.reactionEscalatedAt) kinds.push({ field: "reactionEscalatedAt", note: "Просрочен срок первой реакции" });
-    if (i.dueAt < now && !i.escalatedAt) kinds.push({ field: "escalatedAt", note: "Просрочен срок решения" });
+    if (i.dueAt < now && !i.escalatedAt && i.status !== "NEEDS_INFO") kinds.push({ field: "escalatedAt", note: "Просрочен срок решения" });
     for (const k of kinds) {
       // Идемпотентно: эскалирует только тот, кто первым «занял» отметку (несколько процессов, cron + запросы)
-      const claimed = await db.issue.updateMany({ where: { id: i.id, [k.field]: null }, data: { [k.field]: now } });
-      if (claimed.count === 0) continue;
-      await db.issueEvent.create({ data: { issueId: i.id, type: "ESCALATED", note: k.note, internal: true, createdAt: now } });
+      // отметка и событие в истории — атомарно: эскалация не «теряется» при сбое между ними
+      const claimed = await db.$transaction(async (tx) => {
+        const r = await tx.issue.updateMany({ where: { id: i.id, [k.field]: null }, data: { [k.field]: now } });
+        if (r.count === 0) return false;
+        await tx.issueEvent.create({ data: { issueId: i.id, type: "ESCALATED", note: k.note, internal: true, createdAt: now } });
+        return true;
+      });
+      if (!claimed) continue;
       await notify([i.assigneeId, ...managers], { issueId: i.id, title: `${i.code}: ${k.note.toLowerCase()}`, body: i.title });
       notifyBitrix({ kind: "escalated", code: i.code, title: i.title, note: k.note, assignee: assigneeNames.get(i.assigneeId ?? "") ?? null, isPrivate: i.isPrivate });
       escalated++;
@@ -644,7 +756,7 @@ export async function sweepSla(force = false) {
 }
 
 export function isIssueOverdue(i: Pick<Issue, "status" | "dueAt" | "firstResponseAt" | "firstResponseDueAt">, now = new Date()) {
-  return OPEN_STATUSES.includes(i.status) && (i.dueAt < now || (!i.firstResponseAt && i.firstResponseDueAt < now));
+  return isOverdue(i, now);
 }
 
 export { ApiError };

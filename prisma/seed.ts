@@ -4,8 +4,6 @@
 // Даты строятся относительно момента запуска seed, чтобы аналитика и сроки всегда были «живыми».
 import { PrismaClient, type IssueStatus, type IssueType, type Priority, type CommentKind, type EventType } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 const db = new PrismaClient();
 const NOW = Date.now();
@@ -15,6 +13,8 @@ const at = (daysAgo: number) => new Date(NOW - daysAgo * DAY);
 const plusH = (d: Date, h: number) => new Date(d.getTime() + h * HOUR);
 
 export const DEMO_PASSWORD = "pulse-demo";
+// Для стенда без быстрого входа задайте свой пароль: SEED_PASSWORD="…" npm run db:seed
+const PASSWORD = process.env.SEED_PASSWORD || DEMO_PASSWORD;
 
 const SLA: Record<Priority, { h: number; d: number }> = {
   HIGH: { h: 24, d: 7 },
@@ -304,9 +304,16 @@ const SEED_FILES = [
 ];
 
 async function main() {
+  // Seed полностью очищает базу. Защита от случайного запуска на рабочих данных:
+  // если в базе есть пользователи не из демо-набора, нужен явный SEED_FORCE=1.
+  const realUsers = await db.user.count({ where: { NOT: { email: { endsWith: "@pulse.demo" } } } });
+  if (realUsers > 0 && process.env.SEED_FORCE !== "1") {
+    console.error(`PULSE seed остановлен: в базе ${realUsers} пользователей не из демо-набора. Seed удалит все данные. Если это действительно нужно — SEED_FORCE=1.`);
+    process.exit(1);
+  }
   console.log("PULSE seed: очистка…");
   await db.$executeRawUnsafe(
-    `TRUNCATE "Notification","Supporter","Attachment","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
+    `TRUNCATE "Notification","Supporter","Attachment","FileBlob","IssueEvent","Comment","Issue","ThemeDecision","RoutingRule","Category","SlaPolicy","AiUsage","AiCache","AiDigest","Setting" RESTART IDENTITY CASCADE`,
   );
   await db.department.updateMany({ data: { headId: null } });
   await db.user.deleteMany();
@@ -321,7 +328,7 @@ async function main() {
     deptId[name] = (await db.department.create({ data: { name, sortOrder: i } })).id;
   }
 
-  const hash = await bcrypt.hash(DEMO_PASSWORD, 10);
+  const hash = await bcrypt.hash(PASSWORD, 10);
   const uid: Record<string, string> = {};
   for (const [i, u] of USERS.entries()) {
     const created = await db.user.create({
@@ -438,13 +445,16 @@ async function main() {
     }
   }
 
-  // Файлы-заглушки
-  const dir = path.join(process.cwd(), "uploads");
-  await mkdir(dir, { recursive: true });
+  // Срок решения на паузе, пока автор отвечает на уточнение
+  await db.$executeRawUnsafe(
+    `UPDATE "Issue" i SET "pausedAt" = (SELECT max(e."createdAt") FROM "IssueEvent" e WHERE e."issueId" = i."id" AND e."type" = 'STATUS_CHANGED' AND e."toValue" = 'NEEDS_INFO') WHERE i."status" = 'NEEDS_INFO'`,
+  );
+
+  // Файлы-заглушки (содержимое — в БД, как у загруженных пользователями)
   for (const f of SEED_FILES) {
     const issue = await db.issue.findUniqueOrThrow({ where: { code: f.code } });
     const buf = Buffer.from(f.content, "utf8");
-    await writeFile(path.join(dir, f.key), buf);
+    await db.fileBlob.create({ data: { key: f.key, data: new Uint8Array(buf) } });
     await db.attachment.create({
       data: { issueId: issue.id, uploaderId: uid[f.by], fileName: f.name, mimeType: f.mime, size: buf.length, storageKey: f.key, createdAt: plusH(issue.createdAt, f.hoursAfter) },
     });
@@ -468,7 +478,7 @@ async function main() {
 
   const counts = await Promise.all([db.user.count(), db.category.count(), db.issue.count(), db.comment.count(), db.issueEvent.count()]);
   console.log(`Готово: пользователей ${counts[0]}, категорий ${counts[1]}, обращений ${counts[2]}, комментариев ${counts[3]}, событий ${counts[4]}`);
-  console.log(`Демо-пароль для всех аккаунтов: ${DEMO_PASSWORD}`);
+  console.log(process.env.SEED_PASSWORD ? "Пароль аккаунтов задан через SEED_PASSWORD" : `Демо-пароль для всех аккаунтов: ${DEMO_PASSWORD}`);
 }
 
 main()

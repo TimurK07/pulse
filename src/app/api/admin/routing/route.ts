@@ -25,10 +25,16 @@ export const PUT = route(
       primaryId: r.mode === "FIXED" ? (r.primaryId ?? null) : null,
       backupId: r.backupId ?? null,
     };
-    const existing = await db.routingRule.findFirst({ where: { categoryId: r.categoryId, issueType: r.issueType } });
-    const rule = existing
-      ? await db.routingRule.update({ where: { id: existing.id }, data })
-      : await db.routingRule.create({ data: { ...data, categoryId: r.categoryId, issueType: r.issueType } });
+    const category = await db.category.findUnique({ where: { id: r.categoryId }, select: { id: true } });
+    if (!category) throw badRequest("Категория не найдена");
+    // уникальность (категория, тип) при типе NULL база не гарантирует — сериализуем запись по категории
+    const rule = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"routing:" + r.categoryId}))`;
+      const existing = await tx.routingRule.findFirst({ where: { categoryId: r.categoryId, issueType: r.issueType } });
+      return existing
+        ? tx.routingRule.update({ where: { id: existing.id }, data })
+        : tx.routingRule.create({ data: { ...data, categoryId: r.categoryId, issueType: r.issueType } });
+    });
     return { rule };
   },
   { roles: ["ADMIN"] },

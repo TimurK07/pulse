@@ -11,9 +11,9 @@ export interface RoutingResult {
   via: "primary" | "backup" | "department_head" | "manager_queue" | "unassigned";
 }
 
-type Candidate = { id: string; name: string; isActive: boolean; isAvailable: boolean } | null;
+type Candidate = { id: string; name: string; isActive: boolean; isAvailable: boolean; role: string } | null;
 
-const usable = (u: Candidate): boolean => !!u && u.isActive && u.isAvailable;
+const PERSON = { select: { id: true, name: true, isActive: true, isAvailable: true, role: true } } as const;
 
 /**
  * Маршрутизация обращения:
@@ -30,12 +30,19 @@ export async function resolveRoute(params: {
   authorDepartmentId: string | null;
   /** анонимное обращение не направляется руководителю подразделения автора */
   isAnonymous?: boolean;
+  /** автор не может стать ответственным за собственное обращение */
+  authorId?: string;
 }): Promise<RoutingResult> {
+  // Сотрудник без прав обработки не может быть ответственным: он не увидит обращение.
+  // Автор тоже пропускается: иначе анонимность раскрывается через поле «ответственный».
+  const usable = (u: Candidate): boolean => !!u && u.isActive && u.isAvailable && u.role !== "EMPLOYEE" && u.id !== params.authorId;
+  const why = (u: NonNullable<Candidate>) =>
+    u.id === params.authorId ? "автор обращения" : !u.isActive ? "неактивен" : u.role === "EMPLOYEE" ? "нет прав обработки" : "отсутствует";
   const rules = await db.routingRule.findMany({
     where: { categoryId: params.categoryId, OR: [{ issueType: params.type }, { issueType: null }] },
     include: {
-      primary: { select: { id: true, name: true, isActive: true, isAvailable: true } },
-      backup: { select: { id: true, name: true, isActive: true, isAvailable: true } },
+      primary: PERSON,
+      backup: PERSON,
     },
   });
   const rule = rules.find((r) => r.issueType === params.type) ?? rules.find((r) => r.issueType === null);
@@ -43,7 +50,7 @@ export async function resolveRoute(params: {
   const deptHead = params.authorDepartmentId && !params.isAnonymous
     ? await db.department.findUnique({
         where: { id: params.authorDepartmentId },
-        select: { name: true, head: { select: { id: true, name: true, isActive: true, isAvailable: true } } },
+        select: { name: true, head: PERSON },
       })
     : null;
 
@@ -58,7 +65,17 @@ export async function resolveRoute(params: {
         via: "department_head",
       };
     }
-    if (deptHead?.head) skipped.push(`${deptHead.head.name} недоступен`);
+    if (deptHead?.head) skipped.push(`${deptHead.head.name} — ${why(deptHead.head)}`);
+    // резервный, указанный в правиле, раньше общей очереди руководителя
+    if (usable(rule.backup)) {
+      return {
+        assigneeId: rule.backup!.id,
+        assigneeName: rule.backup!.name,
+        note: `Руководитель подразделения автора недоступен${skipped.length ? ` (${skipped.join(", ")})` : ""} — назначен резервный`,
+        via: "backup",
+      };
+    }
+    if (rule.backup) skipped.push(`резервный ${rule.backup.name} — ${why(rule.backup)}`);
   }
 
   if (rule && rule.mode === "FIXED") {
@@ -70,7 +87,7 @@ export async function resolveRoute(params: {
         via: "primary",
       };
     }
-    if (rule.primary) skipped.push(`${rule.primary.name} ${rule.primary.isActive ? "отсутствует" : "неактивен"}`);
+    if (rule.primary) skipped.push(`${rule.primary.name} — ${why(rule.primary)}`);
     if (usable(rule.backup)) {
       return {
         assigneeId: rule.backup!.id,
@@ -79,7 +96,7 @@ export async function resolveRoute(params: {
         via: "backup",
       };
     }
-    if (rule.backup) skipped.push(`резервный ${rule.backup.name} недоступен`);
+    if (rule.backup) skipped.push(`резервный ${rule.backup.name} — ${why(rule.backup)}`);
   }
 
   if (rule?.mode !== "AUTHOR_DEPARTMENT_HEAD" && usable(deptHead?.head ?? null)) {
@@ -92,7 +109,7 @@ export async function resolveRoute(params: {
   }
 
   const manager = await db.user.findFirst({
-    where: { role: "MANAGER", isActive: true, isAvailable: true },
+    where: { role: "MANAGER", isActive: true, isAvailable: true, ...(params.authorId ? { id: { not: params.authorId } } : {}) },
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true },
   });

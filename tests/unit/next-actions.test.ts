@@ -11,7 +11,7 @@ function issue(code: string, over: Partial<IssueListItem> = {}): IssueListItem {
     id: code, code, type: "PROBLEM", title: `Обращение ${code}`, status: "NEW", priority: "MEDIUM",
     category: { id: "c", name: "К" }, department: null, assignee: { id: "u1", name: "Роман Козлов", title: "IT" }, author: null,
     isAnonymous: false, isOwn: false, createdAt: new Date(NOW - 48 * H).toISOString(), updatedAt: new Date(NOW - 48 * H).toISOString(),
-    firstResponseDueAt: new Date(NOW - H).toISOString(), firstResponseAt: null, dueAt: new Date(NOW + 100 * H).toISOString(), resolvedAt: null,
+    firstResponseDueAt: new Date(NOW - H).toISOString(), firstResponseAt: null, dueAt: new Date(NOW + 100 * H).toISOString(), pausedAt: null, resolvedAt: null,
     supportersCount: 0, commentsCount: 0, attachmentsCount: 0, ...over,
   };
 }

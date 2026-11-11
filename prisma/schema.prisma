@@ -176,6 +176,8 @@ model Issue {
   escalatedAt        DateTime?
   /// эскалация просрочки первой реакции
   reactionEscalatedAt DateTime?
+  /// срок решения на паузе, пока автор отвечает на уточнение (NEEDS_INFO)
+  pausedAt           DateTime?
 
   decision     String?
   decisionAt   DateTime?
@@ -208,6 +210,7 @@ model Issue {
   @@index([categoryId])
   @@index([createdAt])
   @@index([themeDecisionId])
+  @@index([departmentId])
 }
 
 /// Одно решение по повторяющейся теме: закрывает или берёт в работу сразу все её обращения
@@ -267,6 +270,15 @@ model Attachment {
   size       Int
   storageKey String   @unique
   createdAt  DateTime @default(now())
+
+  @@index([issueId])
+}
+
+/// Содержимое вложений: хранится в БД, чтобы работать на serverless-хостинге без постоянного диска
+model FileBlob {
+  key       String   @id
+  data      Bytes
+  createdAt DateTime @default(now())
 }
 
 model Supporter {
@@ -292,6 +304,8 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@index([issueId])
 }
 
 /// Журнал AI-вызовов: учёт токенов, стоимости, ошибок и fallback

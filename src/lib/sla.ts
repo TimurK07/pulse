@@ -33,6 +33,8 @@ interface SlaInput {
   firstResponseAt: Date | null;
   firstResponseDueAt: Date;
   dueAt: Date;
+  /** начало паузы (ожидание ответа автора): срок решения в это время не идёт */
+  pausedAt?: Date | null;
 }
 
 /** «Скоро» — осталось меньше 25% окна или меньше 12 часов */
@@ -51,17 +53,21 @@ export function slaInfo(issue: SlaInput, now: Date = new Date(), createdAt?: Dat
       resolutionOverdue: false,
     };
   }
-  const resolutionOverdue = issue.dueAt.getTime() < now.getTime();
+  const paused = issue.status === "NEEDS_INFO";
+  // на паузе остаток срока «заморожен» на момент запроса уточнения
+  const clock = paused ? (issue.pausedAt ?? now) : now;
+  const resolutionOverdue = issue.dueAt.getTime() < clock.getTime();
   const firstResponseOverdue = !issue.firstResponseAt && issue.firstResponseDueAt.getTime() < now.getTime();
 
   const phase: SlaInfo["phase"] = issue.firstResponseAt ? "resolution" : "first_response";
   const deadline = phase === "first_response" ? issue.firstResponseDueAt : issue.dueAt;
-  const msLeft = deadline.getTime() - now.getTime();
+  const msLeft = deadline.getTime() - (phase === "resolution" ? clock : now).getTime();
   const windowMs = createdAt ? deadline.getTime() - createdAt.getTime() : 2 * DAY;
 
   let state: SlaState = "ok";
-  if (firstResponseOverdue || resolutionOverdue) state = "overdue";
-  else if (issue.status === "NEEDS_INFO") state = "paused";
+  // на паузе просрочкой считается только пропущенная первая реакция — так же, как в списках и эскалациях
+  if (firstResponseOverdue || (resolutionOverdue && !paused)) state = "overdue";
+  else if (paused) state = "paused";
   else if (msLeft < soonThreshold(windowMs)) state = "soon";
 
   return { state, phase, msLeft, deadline, firstResponseOverdue, resolutionOverdue };
@@ -83,4 +89,24 @@ export function slaLabel(info: SlaInfo) {
   const what = info.phase === "first_response" ? "реакция" : "решение";
   if (info.msLeft < 0) return `${what}: просрочено на ${formatDuration(info.msLeft)}`;
   return `${what}: ${formatDuration(info.msLeft)}`;
+}
+
+/** Перенос срока решения на время паузы: вызывается при выходе из «Ожидает уточнения» */
+export function resumeAfterPause(dueAt: Date, pausedAt: Date | null, now: Date) {
+  if (!pausedAt) return dueAt;
+  const paused = Math.max(0, now.getTime() - pausedAt.getTime());
+  return new Date(dueAt.getTime() + paused);
+}
+
+/**
+ * Просрочено ли открытое обращение. Срок решения не считается просроченным,
+ * пока обращение ждёт ответа автора (пауза) — так же, как в списках и эскалациях.
+ */
+export function isOverdue(
+  i: { status: IssueStatus; dueAt: Date; firstResponseAt: Date | null; firstResponseDueAt: Date },
+  now: Date = new Date(),
+) {
+  if (!isOpen(i.status)) return false;
+  if (!i.firstResponseAt && i.firstResponseDueAt < now) return true;
+  return i.status !== "NEEDS_INFO" && i.dueAt < now;
 }
