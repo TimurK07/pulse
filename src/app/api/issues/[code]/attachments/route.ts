@@ -9,9 +9,9 @@ import { notify } from "@/lib/services/notifications";
 export const POST = route<RouteContext<"/api/issues/[code]/attachments">>(async ({ req, user, ctx }) => {
   const { code } = await ctx.params;
   const issue = await db.issue.findUnique({ where: { code: decodeURIComponent(code) } });
-  if (!issue) throw notFound("Обращение");
+  if (!issue) throw notFound("Обращение не найдено");
   const access = issueAccess(user, issue, await accessContext(user));
-  if (access !== "handler" && access !== "author") throw notFound("Обращение");
+  if (access !== "handler" && access !== "author") throw notFound("Обращение не найдено");
   if (RESOLVED_STATUSES.includes(issue.status)) throw forbidden("Обращение закрыто — файлы добавить нельзя");
 
   // Размер проверяем до чтения тела: без Content-Length (chunked) запрос не принимаем,

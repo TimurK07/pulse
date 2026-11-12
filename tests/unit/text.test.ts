@@ -50,6 +50,17 @@ describe("локальный текстовый движок", () => {
     expect(r.categoryId).toBe("it");
     expect(r.type).toBe("PROBLEM");
   });
+  it("учитывает короткие термины «1С» и «ПК», в том числе «1C» латиницей", () => {
+    expect(tokenize("Печать из 1С")).toContain("1с");
+    expect(tokenize("Печать из 1C")).toContain("1с");
+    expect(tokenize("Новый ПК")).toContain("пк");
+    const cats = [
+      { id: "it", name: "Интеграции и IT", description: "", keywords: ["систем", "1с"] },
+      { id: "of", name: "Корпоративная среда", description: "", keywords: ["офис", "зона"] },
+    ];
+    expect(localClassify({ title: "Принтер печатает пустые листы", description: "При печати счетов из 1С выходят пустые листы" }, cats).categoryId).toBe("it");
+    expect(localClassify({ title: "Пустые листы", description: "При печати из 1C (латиница) выходят пустые листы" }, cats).categoryId).toBe("it");
+  });
   it("маскирует персональные данные перед отправкой в AI", () => {
     expect(redactPII("пишите ivan@corp.ru или +7 (912) 345-67-89")).toBe("пишите [email] или [телефон]");
   });

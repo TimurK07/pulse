@@ -89,3 +89,15 @@ export const themeDecisionSchema = z.object({
   text: z.string().max(LIMITS.commentMax).transform(noNul),
   ownerId: z.string().nullable().optional(),
 });
+
+/** Норматив сроков по приоритету (админка): реакция не может быть дольше решения */
+export const slaPolicySchema = z
+  .object({
+    priority: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    firstResponseHours: z.number().int().min(1).max(24 * 30),
+    resolutionDays: z.number().int().min(1).max(365),
+  })
+  .refine((s) => s.firstResponseHours <= s.resolutionDays * 24, {
+    message: "Срок первой реакции не может быть дольше срока решения",
+    path: ["firstResponseHours"],
+  });

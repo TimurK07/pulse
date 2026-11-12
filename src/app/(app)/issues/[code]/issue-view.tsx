@@ -19,7 +19,7 @@ import {
   type IssueStatus,
 } from "@/lib/domain";
 import type { IssueDetail } from "@/lib/services/issues";
-import { fmtBytes, fmtDate, fmtDateTime } from "@/lib/client/format";
+import { dueFromLocalDate, fmtBytes, fmtDate, fmtDateTime } from "@/lib/client/format";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/field";
 import { Avatar, Kbd, PriorityIcon, STATUS_VAR, SlaBar, SlaTimer, StatusPill, TypeTag } from "@/components/ui/status";
@@ -158,9 +158,9 @@ export function IssueView({ code }: { code: string }) {
               {i.department && !(i.isAnonymous && !v.isAuthor) && <span>· {i.department.name}</span>}
               <span>· подано {fmtDateTime(i.createdAt)}</span>
               {v.isAuthor && i.isAnonymous && <span className="text-ink-2">· имя скрыто от обработчиков</span>}
-              {v.isAuthor && i.isPrivate && (
-                <span className="inline-flex items-center gap-1 text-ink-2">
-                  · <Lock className="size-3" /> не видно коллегам
+              {i.isPrivate && (v.isAuthor || staff) && (
+                <span className="inline-flex items-center gap-1 text-ink-2" title={staff ? "Автор просил не показывать обращение коллегам: его нет в похожих и на доске результатов" : undefined}>
+                  · <Lock className="size-3" /> {v.isAuthor ? "не видно коллегам" : "конфиденциально"}
                 </span>
               )}
             </p>
@@ -180,7 +180,7 @@ export function IssueView({ code }: { code: string }) {
               </div>
             )}
 
-            {i.decision && !isOpen(i.status) && (v.isAuthor || v.access === "public") && (
+            {i.decision && !isOpen(i.status) && (
               <section className="mt-6 rounded-ctl bg-subtle px-5 py-4" style={{ boxShadow: `inset 3px 0 0 var(--st-${STATUS_VAR[i.status]})` }} aria-label="Итог рассмотрения">
                 <h2 className="text-label font-semibold uppercase tracking-[0.08em]" style={{ color: `var(--st-${STATUS_VAR[i.status]})` }}>
                   Итог: {STATUS_LABEL[i.status]}
@@ -472,7 +472,8 @@ function Deadlines({ issue: i, canEdit, onChangeDue }: { issue: IssueDetail; can
                 onChange={(e) => {
                   // при вводе с клавиатуры поле проходит через 0002…2026 — сохраняем только реальную дату не раньше сегодня
                   const v = e.target.value;
-                  if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v >= localToday()) onChangeDue(new Date(`${v}T18:00:00`).toISOString());
+                  const iso = v >= localToday() ? dueFromLocalDate(v) : null;
+                  if (iso) onChangeDue(iso);
                 }}
               />
             </label>

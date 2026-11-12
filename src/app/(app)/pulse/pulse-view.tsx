@@ -64,7 +64,12 @@ export function PulseView() {
   ) : g.overdue.length ? (
     <>
       {g.overdue.length} {pluralRu(g.overdue.length, "обращение просрочено", "обращения просрочены", "обращений просрочено")}
-      <span className="text-ink-3">, {g.soon.length + g.fresh.length} ждут реакции</span>
+      {/* «Срок истекает» + «Новые без реакции»: не путать с плиткой «Без первой реакции» */}
+      {g.soon.length + g.fresh.length > 0 && (
+        <span className="text-ink-3">
+          , ещё {g.soon.length + g.fresh.length} {pluralRu(g.soon.length + g.fresh.length, "требует", "требуют", "требуют")} внимания
+        </span>
+      )}
     </>
   ) : (
     "Просроченных обращений нет"

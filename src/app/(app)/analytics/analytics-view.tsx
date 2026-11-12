@@ -7,7 +7,7 @@ import { api, errorMessage, qs } from "@/lib/client/api";
 import { useMeta } from "@/lib/client/queries";
 import type { Analytics } from "@/lib/services/analytics";
 import { TYPE_LABEL } from "@/lib/domain";
-import { fmtDate, fmtHours, fmtPct } from "@/lib/client/format";
+import { fmtDate, fmtHours, fmtPct, timeToResultLabel } from "@/lib/client/format";
 import { RowsSkeleton, ErrorState, Skeleton } from "@/components/ui/states";
 import { cn } from "@/lib/cn";
 import { FlowChart } from "@/components/analytics/flow-chart";
@@ -179,7 +179,7 @@ export function AnalyticsView() {
                         <p className="mt-0.5 text-meta text-ink-2">{i.decision}</p>
                         <p className="mt-0.5 text-micro text-ink-3">
                           {i.category} · {i.decisionAt && fmtDate(i.decisionAt)}
-                          {i.daysToResult != null && <> · от подачи до результата {i.daysToResult} дн.</>}
+                          {i.daysToResult != null && <> · результат {timeToResultLabel(i.daysToResult)} от подачи</>}
                         </p>
                       </li>
                     ))}

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ThumbsUp } from "lucide-react";
 import { api, errorMessage } from "@/lib/client/api";
-import { fmtDate } from "@/lib/client/format";
+import { fmtDate, timeToResult } from "@/lib/client/format";
 import { pluralRu, TYPE_LABEL, type IssueStatus, type IssueType } from "@/lib/domain";
 import { ErrorState, RowsSkeleton, EmptyState } from "@/components/ui/states";
 import { StatusIcon } from "@/components/ui/status";
@@ -67,7 +67,7 @@ export function ResultsView() {
                 <p className="mt-2 flex-1 text-body text-ink-2">{i.decision}</p>
                 <p className="mt-4 flex flex-wrap gap-x-3 text-micro text-ink-3">
                   {i.decisionAt && <span>внедрено {fmtDate(i.decisionAt)}</span>}
-                  {i.resolvedAt && <span>за {Math.max(1, Math.round((new Date(i.resolvedAt).getTime() - new Date(i.createdAt).getTime()) / 864e5))} дн. от идеи до результата</span>}
+                  {i.resolvedAt && <span>{timeToResult(i.createdAt, i.resolvedAt)} от идеи до результата</span>}
                   {i.department && <span>идея из подразделения «{i.department.name}»</span>}
                 </p>
               </li>

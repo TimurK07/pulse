@@ -51,6 +51,8 @@ export function NewIssueFlow() {
   const [anonymous, setAnonymous] = useState(false);
   const [isPrivate, setPrivate] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // ошибка поля исчезает, как только пользователь его исправляет
+  const clearError = (k: string) => setErrors((e) => (e[k] ? Object.fromEntries(Object.entries(e).filter(([x]) => x !== k)) : e));
   const [supported, setSupported] = useState<Set<string>>(new Set());
   const [created, setCreated] = useState<Created | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -277,7 +279,7 @@ export function NewIssueFlow() {
               id="title"
               value={title}
               maxLength={LIMITS.titleMax}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); clearError("title"); }}
               placeholder={type === "PRAISE" ? "Например: Учебные встречи помогают работать вместе" : "Например: В заявках не хватает параметров оборудования"}
               aria-invalid={!!errors.title || undefined}
               aria-describedby="title-err"
@@ -294,7 +296,7 @@ export function NewIssueFlow() {
               rows={6}
               value={description}
               maxLength={LIMITS.descriptionMax}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); clearError("description"); }}
               placeholder="Опишите ситуацию: что происходит, в каком процессе, к чему это приводит. Не указывайте персональные и коммерческие данные."
               aria-invalid={!!errors.description || undefined}
               aria-describedby="desc-err"
@@ -416,7 +418,7 @@ export function NewIssueFlow() {
               <Label htmlFor="category" required>
                 Категория
               </Label>
-              <Select id="category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-invalid={!!errors.categoryId || undefined}>
+              <Select id="category" value={categoryId} onChange={(e) => { setCategoryId(e.target.value); clearError("categoryId"); }} aria-invalid={!!errors.categoryId || undefined}>
                 <option value="">Выберите категорию</option>
                 {meta.data?.categories.map((c) => (
                   <option key={c.id} value={c.id}>
