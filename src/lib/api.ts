@@ -18,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-export const notFound = (what = "Объект") => new ApiError(404, `${what} не найден`, "not_found");
+export const notFound = (message = "Объект не найден") => new ApiError(404, message, "not_found");
 export const forbidden = (msg = "Недостаточно прав для этого действия") => new ApiError(403, msg, "forbidden");
 export const badRequest = (msg: string, details?: unknown) => new ApiError(400, msg, "bad_request", details);
 

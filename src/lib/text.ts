@@ -34,9 +34,19 @@ export function stem(word: string) {
   return w.length > 7 ? w.slice(0, 7) : w;
 }
 
+/** Короткие, но значимые слова: «1С», «ПК» — без них «печать из 1С» не находит категорию IT */
+const SHORT_TERMS = new Set(["1с", "пк"]);
+
 export function tokenize(text: string): string[] {
-  return (text.toLowerCase().replace(/ё/g, "е").match(/[a-zа-я0-9]+/g) ?? [])
-    .filter((t) => t.length > 2 && !STOP.has(t) && !/^\d+$/.test(t))
+  return (
+    text
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      // «1C» часто набирают латинской C
+      .replace(/1c(?![a-z])/g, "1с")
+      .match(/[a-zа-я0-9]+/g) ?? []
+  )
+    .filter((t) => (t.length > 2 || SHORT_TERMS.has(t)) && !STOP.has(t) && !/^\d+$/.test(t))
     .map(stem);
 }
 

@@ -51,6 +51,21 @@ describe("«Что сделать сейчас» на Пульсе", () => {
     expect(acts.find((a) => a.key === "wt-A-011")?.title).toBe("Автор A-011 не отвечает 5 дней");
   });
 
+  it("тема: выбирается самая весомая, числа согласованы с существительными", () => {
+    const th = (key: string, codes: number, openCount: number, supporters: number) => ({
+      key, title: key, issueIds: [], codes: Array.from({ length: codes }, (_, n) => `A-${n}`), categories: [], departments: [], openCount, supporters, statuses: [],
+    });
+    const acts = buildActions(
+      { overdue: [], unassigned: [], waiting: [] },
+      { byAssignee: [], themes: [th("Обучение", 4, 2, 0), th("Версии документов", 3, 3, 7)] },
+      NOW,
+    );
+    expect(acts).toHaveLength(1);
+    expect(acts[0].title).toBe("Назначить владельца темы «Версии документов»");
+    expect(acts[0].detail).toBe("3 обращения, 7 поддержек — одно системное решение");
+    const one = buildActions({ overdue: [], unassigned: [], waiting: [] }, { byAssignee: [], themes: [th("Т", 2, 2, 1)] }, NOW);
+    expect(one[0].detail).toBe("2 обращения, 1 поддержка — одно системное решение");
+  });
   it("нет проблем — нет шагов", () => {
     expect(buildActions({ overdue: [], unassigned: [], waiting: [] }, { byAssignee: [], themes: [] }, NOW)).toEqual([]);
   });

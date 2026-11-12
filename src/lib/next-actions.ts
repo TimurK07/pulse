@@ -42,7 +42,7 @@ export function buildActions(
       key: `ld-${overloaded.id}`,
       tone: "warn",
       title: `Перераспределить нагрузку: ${overloaded.name}`,
-      detail: `${overloaded.open} открытых, ${overloaded.overdue} ${pluralRu(overloaded.overdue, "просрочено", "просрочено", "просрочено")}`,
+      detail: `${overloaded.open} открытых, ${overloaded.overdue} просрочено`,
       href: `/queue?view=open&assignee=${overloaded.id}`,
       cta: "Очередь",
     });
@@ -52,13 +52,17 @@ export function buildActions(
     const days = Math.floor((now - new Date(longWait.i.updatedAt).getTime()) / 864e5);
     out.push({ key: `wt-${longWait.i.code}`, tone: "neutral", title: `Автор ${longWait.i.code} не отвечает ${days} ${pluralRu(days, "день", "дня", "дней")}`, detail: "Напомните или продолжите без ответа", href: `/issues/${longWait.i.code}`, cta: "Открыть" });
   }
-  const theme = (a?.themes ?? []).find((th) => th.openCount >= 2);
+  // самая весомая тема: больше открытых обращений, затем больше поддержавших коллег
+  const theme = (a?.themes ?? [])
+    .filter((th) => th.openCount >= 2)
+    .sort((x, y) => y.openCount - x.openCount || y.supporters - x.supporters)[0];
   if (theme) {
+    const n = theme.codes.length;
     out.push({
       key: `th-${theme.key}`,
       tone: "neutral",
       title: `Назначить владельца темы «${theme.title}»`,
-      detail: `${theme.codes.length} обращений, ${theme.supporters} поддержек — одно системное решение`,
+      detail: `${n} ${pluralRu(n, "обращение", "обращения", "обращений")}, ${theme.supporters} ${pluralRu(theme.supporters, "поддержка", "поддержки", "поддержек")} — одно системное решение`,
       href: "/analytics",
       cta: "Тема",
     });

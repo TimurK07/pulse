@@ -7,14 +7,14 @@ import { readStoredFile } from "@/lib/storage";
 export const GET = route<RouteContext<"/api/attachments/[id]">>(async ({ user, ctx }) => {
   const { id } = await ctx.params;
   const a = await db.attachment.findUnique({ where: { id }, include: { issue: true } });
-  if (!a) throw notFound("Файл");
+  if (!a) throw notFound("Файл не найден");
   const access = issueAccess(user, a.issue, await accessContext(user));
-  if (access !== "handler" && access !== "author") throw notFound("Файл");
+  if (access !== "handler" && access !== "author") throw notFound("Файл не найден");
   let buf: Buffer;
   try {
     buf = await readStoredFile(a.storageKey);
   } catch {
-    throw notFound("Файл");
+    throw notFound("Файл не найден");
   }
   return new Response(new Uint8Array(buf), {
     headers: {

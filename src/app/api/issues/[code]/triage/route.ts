@@ -11,9 +11,9 @@ type Ctx = RouteContext<"/api/issues/[code]/triage">;
 
 async function check(user: CurrentUser, code: string) {
   const issue = await db.issue.findUnique({ where: { code } });
-  if (!issue) throw notFound("Обращение");
+  if (!issue) throw notFound("Обращение не найдено");
   const access = issueAccess(user, issue, await accessContext(user));
-  if (access === "none") throw notFound("Обращение"); // недоступное неотличимо от несуществующего
+  if (access === "none") throw notFound("Обращение не найдено"); // недоступное неотличимо от несуществующего
   if (access !== "handler") throw forbidden("AI-разбор доступен ответственному и руководителю");
 }
 

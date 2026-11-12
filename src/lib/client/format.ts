@@ -25,3 +25,29 @@ export const initials = (name: string) =>
     .map((p) => p[0])
     .join("")
     .toUpperCase();
+
+/**
+ * Срок решения из даты в поле «изменить» (YYYY-MM-DD, местное время): 18:00 выбранного дня,
+ * а если сегодня 18:00 уже прошло — конец дня. null, если и конец дня уже в прошлом.
+ */
+export function dueFromLocalDate(v: string, now: Date = new Date()): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  for (const t of ["18:00:00", "23:59:00"]) {
+    const d = new Date(`${v}T${t}`);
+    if (!Number.isNaN(d.getTime()) && d > now) return d.toISOString();
+  }
+  return null;
+}
+
+/** «за 3 дня», «меньше чем за сутки» — одинаково на доске результатов и в аналитике */
+export function timeToResultLabel(days: number) {
+  if (days < 1) return "меньше чем за сутки";
+  const m10 = days % 10;
+  const m100 = days % 100;
+  const word = m10 === 1 && m100 !== 11 ? "день" : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? "дня" : "дней";
+  return `за ${days} ${word}`;
+}
+
+export function timeToResult(createdAt: string | Date, resolvedAt: string | Date) {
+  return timeToResultLabel(Math.round((new Date(resolvedAt).getTime() - new Date(createdAt).getTime()) / 864e5));
+}

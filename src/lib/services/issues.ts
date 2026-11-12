@@ -234,7 +234,7 @@ const detailInclude = {
 
 async function loadForAccess(user: CurrentUser, where: Prisma.IssueWhereUniqueInput) {
   const issue = await db.issue.findUnique({ where, include: detailInclude });
-  if (!issue) throw notFound("Обращение");
+  if (!issue) throw notFound("Обращение не найдено");
   const ctx = await accessContext(user);
   const supporter =
     user.id !== issue.authorId
@@ -242,7 +242,7 @@ async function loadForAccess(user: CurrentUser, where: Prisma.IssueWhereUniqueIn
       : null;
   const access = issueAccess(user, issue, { ...ctx, isSupporter: !!supporter });
   // Обращение, которого не видно, неотличимо от несуществующего
-  if (access === "none") throw notFound("Обращение");
+  if (access === "none") throw notFound("Обращение не найдено");
   return { issue, access, isSupporter: !!supporter };
 }
 
@@ -542,6 +542,8 @@ export async function updateIssue(
     const due = new Date(patch.dueAt);
     if (due.getTime() < issue.createdAt.getTime()) throw badRequest("Срок не может быть раньше даты подачи");
     if (due.getTime() !== dueAt.getTime()) {
+      // срок в прошлом сразу делает обращение просроченным и запускает эскалацию
+      if (due.getTime() <= now.getTime()) throw badRequest("Новый срок решения должен быть позже текущего момента");
       events.push({ issueId: issue.id, actorId: user.id, type: "DUE_CHANGED", fromValue: dueAt.toISOString(), toValue: due.toISOString(), createdAt: now });
       dueAt = due;
       data.dueAt = due;
@@ -665,7 +667,7 @@ async function returnStatusAfterInfo(tx: Prisma.TransactionClient, issueId: stri
 
 export async function toggleSupport(user: CurrentUser, code: string) {
   const issue = await db.issue.findUnique({ where: { code } });
-  if (!issue || issue.isPrivate) throw notFound("Обращение");
+  if (!issue || issue.isPrivate) throw notFound("Обращение не найдено");
   // поддержка — голос сотрудника «у меня то же самое»; обработчики работают с обращением напрямую
   if (user.role !== "EMPLOYEE") throw forbidden("Поддерживать обращения могут сотрудники");
   if (issue.authorId === user.id) throw badRequest("Нельзя поддержать собственное обращение");
